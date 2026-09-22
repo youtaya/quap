@@ -1,0 +1,14 @@
+.git
+.venv
+.runtime
+dist
+docs
+legacy
+tests
+**/.pytest_cache
+**/__pycache__
+**/*.pyc
+deploy/secrets
+*.md
+.env
+.env.*

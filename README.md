@@ -6,8 +6,10 @@ QUAP 是独立于 [Qlib](https://github.com/microsoft/qlib) 研究仓库的 A �
 
 ## 文档
 
+- [系统架构设计](docs/系统架构设计.md)
 - [系统框架](docs/系统框架.md)
 - [部署说明](docs/部署说明.md)
+- [系统验证报告](docs/系统验证报告.md)
 - 架构图：[docs/architecture.svg](docs/architecture.svg)
 
 ## 本地开发
