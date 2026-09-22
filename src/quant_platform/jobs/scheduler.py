@@ -95,3 +95,5 @@ def tick(db, settings, at=None):
             )
         db.enqueue(conn, "maintenance", "operations", f"maintenance:{int(at.timestamp()) // 3600}", priority=10)
         db.enqueue(conn, "backup", "operations", f"backup:{day}")
+        if local.time() >= time(9):
+            db.enqueue(conn, "notify", "operations", f"notify:{day}", {"day": str(day)}, 80)

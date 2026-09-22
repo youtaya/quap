@@ -188,6 +188,7 @@ def status(db, settings):
         "analysis_target": db.setting("analysis_target"),
         "polling_paused": db.setting("polling_paused", False),
         "backup": db.setting("backup"),
+        "last_notify": db.setting("last_notify"),
         "qlib": db.setting("qlib", {"enabled": settings.qlib_enabled, "status": "not_published"}),
         "incidents": db.rows("SELECT * FROM incidents ORDER BY updated_at DESC"),
         "qualification": db.setting("qualification", {"status": "pending", "required_trading_sessions": 2}),

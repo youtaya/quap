@@ -13,6 +13,12 @@ x-app: &app
     QUANT_API_TOKEN_FILE: /run/secrets/api_token
     QUANT_TUSHARE_TOKEN_FILE: /run/secrets/tushare_token
     QUANT_QLIB_ENABLED: ${QUANT_QLIB_ENABLED:-false}
+    QUANT_NOTIFY_EMAIL: ${QUANT_NOTIFY_EMAIL:-jxiaoping@gmail.com}
+    QUANT_SMTP_HOST: ${QUANT_SMTP_HOST:-smtp.gmail.com}
+    QUANT_SMTP_PORT: ${QUANT_SMTP_PORT:-587}
+    QUANT_SMTP_USER: ${QUANT_SMTP_USER:-jxiaoping@gmail.com}
+    QUANT_SMTP_PASSWORD: ${QUANT_SMTP_PASSWORD:-}
+    QUANT_SMTP_FROM: ${QUANT_SMTP_FROM:-}
   secrets: [database_url, api_token, tushare_token]
   volumes: [artifacts:/data/artifacts]
   depends_on:

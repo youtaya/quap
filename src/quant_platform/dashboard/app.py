@@ -220,7 +220,12 @@ def operations():
                 st.info(call("PUT", "/settings", {"quote_seconds": seconds, "expected_revision": options["revision"]}))
         st.json(status.get("metrics", {}))
     with st.expander("History, backup and optional Qlib status"):
-        st.json({k: status[k] for k in ("directory", "last_analysis", "backup", "qlib", "qualification", "incidents")})
+        st.json(
+            {
+                k: status[k]
+                for k in ("directory", "last_analysis", "last_notify", "backup", "qlib", "qualification", "incidents")
+            }
+        )
 
     st.subheader("Persistent alerts")
     st.dataframe(call("GET", "/alerts") or [], hide_index=True, use_container_width=True)

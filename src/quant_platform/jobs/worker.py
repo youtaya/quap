@@ -144,6 +144,10 @@ class Worker:
             from quant_platform.operations import maintenance, backup
 
             (maintenance if kind == "maintenance" else backup)(self.db, self.settings, job)
+        elif kind == "notify":
+            from quant_platform.jobs.notify import run as send_notices
+
+            send_notices(self.db, self.settings, job)
         elif kind == "qlib_export":
             from quant_platform.adapters.qlib.export import export
 

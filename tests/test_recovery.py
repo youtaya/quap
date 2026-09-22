@@ -10,6 +10,7 @@ from quant_platform.api import create_app
 from quant_platform.domain import CN, BasketInput, HoldingInput, now
 from quant_platform.jobs.scheduler import tick
 from quant_platform.jobs.worker import Worker
+from quant_platform.jobs.notify import WATCH_COST, WATCH_SYMBOL
 from quant_platform.operations import board_status, doctor, maintenance, qualification
 from quant_platform.providers import Deferred, PermissionDenied
 from quant_platform.providers.tushare import Tushare
@@ -203,6 +204,111 @@ def test_scheduler_quotes_include_active_holdings(db, settings):
     tick(db, settings, at)
     payloads = [r["payload"]["symbols"] for r in db.rows("SELECT payload FROM jobs WHERE kind='quotes'")]
     assert payloads and "SH600895" in payloads[0]
+
+
+def test_scheduler_enqueues_daily_notify_after_nine(db, settings):
+    day = seed(db)
+    before = datetime.combine(day, datetime.min.time(), CN).replace(hour=8, minute=59)
+    after = datetime.combine(day, datetime.min.time(), CN).replace(hour=9)
+    tick(db, settings, before)
+    assert not db.rows("SELECT 1 FROM jobs WHERE kind='notify'")
+    tick(db, settings, after)
+    tick(db, settings, after.replace(hour=10))
+    rows = db.rows("SELECT dedupe,payload,queue FROM jobs WHERE kind='notify'")
+    assert len(rows) == 1
+    assert rows[0]["dedupe"] == f"notify:{day}"
+    assert rows[0]["payload"]["day"] == str(day) and rows[0]["queue"] == "operations"
+
+
+def test_notify_job_pins_zhangjiang_and_sends_two_emails(db, settings, monkeypatch):
+    from quant_platform.jobs.notify import run
+    from pydantic import SecretStr
+
+    day = seed(db)
+    with db.transaction() as conn:
+        conn.execute("UPDATE instruments SET name='张江高科' WHERE symbol='SH600895'")
+        save_holding(conn, HoldingInput(symbol="SH600895", cost_price=10, quantity=100, note="keep"))
+        conn.execute(
+            "INSERT INTO reports(kind,target,as_of,input_hash,data) VALUES('screen','default',%s,'n',%s)",
+            (
+                day,
+                jsonb(
+                    {
+                        "as_of": str(day),
+                        "candidates": [
+                            {
+                                "symbol": "SH600895",
+                                "score": 0.9,
+                                "pe_ttm": 12,
+                                "pb": 1.1,
+                                "industry": "园区开发",
+                                "peer_scope": "industry",
+                                "pe_industry_pct": 0.2,
+                                "pb_industry_pct": 0.3,
+                                "pe_history_pct": 0.2,
+                                "pb_history_pct": 0.3,
+                                "average_turnover20": 50_000_000,
+                                "reasons": ["low_pe_ttm_vs_peers"],
+                                "action": "review_entry",
+                            },
+                            {
+                                "symbol": "SZ000001",
+                                "score": 0.8,
+                                "pe_ttm": 9,
+                                "pb": 1.0,
+                                "reasons": ["low_pb_vs_peers"],
+                            },
+                            {
+                                "symbol": "SZ000002",
+                                "score": 0.7,
+                                "pe_ttm": 10,
+                                "pb": 1.2,
+                                "reasons": ["low_pb_vs_peers"],
+                            },
+                        ],
+                    }
+                ),
+            ),
+        )
+        did = db.dataset(conn, "daily", str(day), [{"close": 27.5}], {})
+        conn.execute("INSERT INTO daily_bars VALUES('SH600895',%s,%s,%s)", (day, did, jsonb({"close": 27.5})))
+    sent = []
+    monkeypatch.setattr("quant_platform.jobs.notify.deliver", lambda _settings, message: sent.append(message))
+    settings = settings.model_copy(update={"smtp_password": SecretStr("app-password")})
+    item = job(db, "notify", queue="operations", payload={"day": str(day)})
+    run(db, settings, item)
+    assert {r["cost_price"] for r in db.rows("SELECT cost_price FROM holdings WHERE NOT archived")} == {WATCH_COST}
+    assert db.rows("SELECT quantity,note FROM holdings")[0] == {"quantity": 100.0, "note": "keep"}
+    assert len(sent) == 2
+    assert "相对估值候选（3只）" in sent[0]["subject"]
+    assert "张江高科" in sent[1]["subject"] and "考虑补仓" in sent[1]["body"]
+    assert "23.80" in sent[1]["body"] and db.setting("last_notify")["to"] == "jxiaoping@gmail.com"
+    assert db.rows("SELECT status FROM jobs WHERE kind='notify'")[0]["status"] == "complete"
+
+
+def test_notify_defers_without_smtp_but_still_pins_holding(db, settings):
+    from quant_platform.jobs.notify import run
+    from quant_platform.providers import Deferred
+
+    seed(db)
+    item = job(db, "notify", queue="operations", payload={"day": "2026-09-22"})
+    try:
+        run(db, settings, item)
+    except Deferred as exc:
+        assert "smtp unconfigured" in str(exc)
+    else:
+        raise AssertionError("Unconfigured SMTP must defer")
+    holding = db.rows("SELECT symbol,cost_price FROM holdings WHERE NOT archived")[0]
+    assert holding == {"symbol": WATCH_SYMBOL, "cost_price": WATCH_COST}
+    assert db.rows("SELECT status FROM jobs WHERE kind='notify'")[0]["status"] == "running"
+
+
+def test_worker_routes_notify(db, settings, monkeypatch):
+    called = []
+    monkeypatch.setattr("quant_platform.jobs.notify.run", lambda *args: called.append(args[2]["kind"]))
+    worker = Worker(db, settings, "operations")
+    worker.execute(job(db, "notify", queue="operations", payload={"day": "2026-09-22"}))
+    assert called == ["notify"]
 
 
 def test_retention_preserves_recent_rows_and_records_incidents(db, settings, tmp_path):

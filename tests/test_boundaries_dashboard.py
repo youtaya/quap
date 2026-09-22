@@ -65,6 +65,7 @@ def fake_request(self, method, path, data=None):
             "jobs": [],
             "directory": {},
             "last_analysis": None,
+            "last_notify": None,
             "backup": None,
             "qlib": {},
             "qualification": {},
@@ -227,6 +228,9 @@ def test_local_compose_uses_persistent_backup_volume():
     assert base["services"]["api"]["ports"] == ["127.0.0.1:8000:8000"]
     assert base["services"]["dashboard"]["ports"] == ["127.0.0.1:8501:8501"]
     assert not base["services"]["postgres"].get("ports")
+    env = base["services"]["operations"]["environment"]
+    assert env["QUANT_NOTIFY_EMAIL"] == "${QUANT_NOTIFY_EMAIL:-jxiaoping@gmail.com}"
+    assert env["QUANT_SMTP_HOST"] == "${QUANT_SMTP_HOST:-smtp.gmail.com}"
 
 
 def test_dockerignore_excludes_secrets_and_runtime():
