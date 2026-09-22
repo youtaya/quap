@@ -209,6 +209,12 @@ def test_local_compose_uses_persistent_backup_volume():
     assert not base["services"]["postgres"].get("ports")
 
 
+def test_dockerignore_excludes_secrets_and_runtime():
+    text = (Path(__file__).parents[1] / ".dockerignore").read_text()
+    for pattern in (".git", ".venv", ".runtime", "deploy/secrets", "legacy", "tests"):
+        assert pattern in text.splitlines()
+
+
 def test_built_distribution_contents():
     import os
     import tarfile
