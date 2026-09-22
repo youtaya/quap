@@ -21,4 +21,4 @@ uv sync --frozen --python 3.11 --group dev
 .venv/bin/quant-platform --help
 ```
 
-运行中的服务、密钥和验收步骤见部署说明。可选的公开行情旧监控保存在 `legacy/`，只用于迁移和经批准的回滚。
+运行中的服务、密钥和验收步骤见部署说明。从旧监控迁移使用 `import-legacy`，由操作员提供外部旧监控运行时，只用于迁移和经批准的回滚。
