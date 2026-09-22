@@ -96,12 +96,14 @@ class Worker:
 
     def execute(self, job):
         kind = job["kind"]
-        if kind in {"directory", "calendar", "daily", "factors", "quotes", "doctor", "benchmark"}:
+        if kind in {"directory", "calendar", "daily", "factors", "quotes", "doctor", "benchmark", "basics"}:
             self.feed = self.feed or Tushare(self.settings, self.db)
         if kind in {"directory", "calendar"}:
             collect.reference(self.db, self.feed, job)
         elif kind in {"daily", "factors"}:
             collect.history(self.db, self.feed, job)
+        elif kind == "basics":
+            collect.basics(self.db, self.feed, job)
         elif kind == "quotes":
             collect.quotes(self.db, self.feed, job)
         elif kind == "benchmark":
@@ -142,6 +144,10 @@ class Worker:
             from quant_platform.operations import maintenance, backup
 
             (maintenance if kind == "maintenance" else backup)(self.db, self.settings, job)
+        elif kind == "notify":
+            from quant_platform.jobs.notify import run as send_notices
+
+            send_notices(self.db, self.settings, job)
         elif kind == "qlib_export":
             from quant_platform.adapters.qlib.export import export
 

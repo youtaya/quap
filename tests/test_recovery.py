@@ -7,14 +7,16 @@ import pytest
 from fastapi.testclient import TestClient
 
 from quant_platform.api import create_app
-from quant_platform.domain import CN, BasketInput, now
+from quant_platform.domain import CN, BasketInput, HoldingInput, now
 from quant_platform.jobs.scheduler import tick
 from quant_platform.jobs.worker import Worker
+from quant_platform.jobs.notify import WATCH_COST, WATCH_SYMBOL
 from quant_platform.operations import board_status, doctor, maintenance, qualification
 from quant_platform.providers import Deferred, PermissionDenied
 from quant_platform.providers.tushare import Tushare
 from quant_platform.storage import jsonb
 from quant_platform.storage.baskets import Conflict, save_basket
+from quant_platform.storage.holdings import save_holding
 from test_postgres import seed
 from test_provider import row
 
@@ -193,6 +195,122 @@ def test_doctor_only_unblocks_revalidated_dependencies(db, settings):
     assert states == {"directory": "pending", "daily": "blocked", "quotes": "blocked", "qlib_export": "blocked"}
 
 
+def test_scheduler_quotes_include_active_holdings(db, settings):
+    day = seed(db)
+    at = datetime.combine(day, datetime.min.time(), CN).replace(hour=10)
+    with db.transaction() as conn:
+        db.set_setting(conn, "directory", {"fetched_at": (at - timedelta(hours=50)).isoformat()})
+        save_holding(conn, HoldingInput(symbol="SH600895", cost_price=10))
+    tick(db, settings, at)
+    payloads = [r["payload"]["symbols"] for r in db.rows("SELECT payload FROM jobs WHERE kind='quotes'")]
+    assert payloads and "SH600895" in payloads[0]
+
+
+def test_scheduler_enqueues_daily_notify_after_nine(db, settings):
+    day = seed(db)
+    before = datetime.combine(day, datetime.min.time(), CN).replace(hour=8, minute=59)
+    after = datetime.combine(day, datetime.min.time(), CN).replace(hour=9)
+    tick(db, settings, before)
+    assert not db.rows("SELECT 1 FROM jobs WHERE kind='notify'")
+    tick(db, settings, after)
+    tick(db, settings, after.replace(hour=10))
+    rows = db.rows("SELECT dedupe,payload,queue FROM jobs WHERE kind='notify'")
+    assert len(rows) == 1
+    assert rows[0]["dedupe"] == f"notify:{day}"
+    assert rows[0]["payload"]["day"] == str(day) and rows[0]["queue"] == "operations"
+
+
+def test_notify_job_pins_zhangjiang_and_sends_two_emails(db, settings, monkeypatch):
+    from quant_platform.jobs.notify import run
+    from pydantic import SecretStr
+
+    day = seed(db)
+    with db.transaction() as conn:
+        conn.execute("UPDATE instruments SET name='张江高科' WHERE symbol='SH600895'")
+        save_holding(conn, HoldingInput(symbol="SH600895", cost_price=10, quantity=100, note="keep"))
+        conn.execute(
+            "INSERT INTO reports(kind,target,as_of,input_hash,data) VALUES('screen','default',%s,'n',%s)",
+            (
+                day,
+                jsonb(
+                    {
+                        "as_of": str(day),
+                        "candidates": [
+                            {
+                                "symbol": "SH600895",
+                                "score": 0.9,
+                                "pe_ttm": 12,
+                                "pb": 1.1,
+                                "industry": "园区开发",
+                                "peer_scope": "industry",
+                                "pe_industry_pct": 0.2,
+                                "pb_industry_pct": 0.3,
+                                "pe_history_pct": 0.2,
+                                "pb_history_pct": 0.3,
+                                "average_turnover20": 50_000_000,
+                                "reasons": ["low_pe_ttm_vs_peers"],
+                                "action": "review_entry",
+                            },
+                            {
+                                "symbol": "SZ000001",
+                                "score": 0.8,
+                                "pe_ttm": 9,
+                                "pb": 1.0,
+                                "reasons": ["low_pb_vs_peers"],
+                            },
+                            {
+                                "symbol": "SZ000002",
+                                "score": 0.7,
+                                "pe_ttm": 10,
+                                "pb": 1.2,
+                                "reasons": ["low_pb_vs_peers"],
+                            },
+                        ],
+                    }
+                ),
+            ),
+        )
+        did = db.dataset(conn, "daily", str(day), [{"close": 27.5}], {})
+        conn.execute("INSERT INTO daily_bars VALUES('SH600895',%s,%s,%s)", (day, did, jsonb({"close": 27.5})))
+    sent = []
+    monkeypatch.setattr("quant_platform.jobs.notify.deliver", lambda _settings, message: sent.append(message))
+    settings = settings.model_copy(update={"smtp_password": SecretStr("app-password")})
+    item = job(db, "notify", queue="operations", payload={"day": str(day)})
+    run(db, settings, item)
+    assert {r["cost_price"] for r in db.rows("SELECT cost_price FROM holdings WHERE NOT archived")} == {WATCH_COST}
+    assert db.rows("SELECT quantity,note FROM holdings")[0] == {"quantity": 100.0, "note": "keep"}
+    assert len(sent) == 2
+    assert "相对估值候选（3只）" in sent[0]["subject"]
+    assert "张江高科" in sent[1]["subject"] and "考虑补仓" in sent[1]["body"]
+    assert "23.80" in sent[1]["body"] and db.setting("last_notify")["to"] == "jxiaoping@gmail.com"
+    assert db.rows("SELECT status FROM jobs WHERE kind='notify'")[0]["status"] == "complete"
+
+
+def test_notify_defers_without_smtp_but_still_pins_holding(db, settings):
+    from quant_platform.jobs.notify import run
+    from quant_platform.providers import Deferred
+
+    seed(db)
+    item = job(db, "notify", queue="operations", payload={"day": "2026-09-22"})
+    try:
+        run(db, settings, item)
+    except Deferred as exc:
+        assert "smtp unconfigured" in str(exc)
+    else:
+        raise AssertionError("Unconfigured SMTP must defer")
+    holding = db.rows("SELECT symbol,cost_price FROM holdings WHERE NOT archived")[0]
+    assert holding == {"symbol": WATCH_SYMBOL, "cost_price": WATCH_COST}
+    assert db.rows("SELECT status FROM jobs WHERE kind='notify'")[0]["status"] == "running"
+
+
+def test_worker_routes_notify(db, settings, monkeypatch):
+    called = []
+    monkeypatch.setattr("quant_platform.jobs.notify.run", lambda *args: called.append(args[2]["kind"]))
+    worker = Worker(db, settings, "operations")
+    worker.execute(job(db, "notify", queue="operations", payload={"day": "2026-09-22"}))
+    assert called == ["notify"]
+
+
 def test_retention_preserves_recent_rows_and_records_incidents(db, settings, tmp_path):
     settings.artifact_root = tmp_path
     with db.transaction() as conn:
@@ -252,7 +370,7 @@ def test_gapped_stock_and_benchmark_metrics_are_unavailable(history_rows):
 def seed_analysis(db, history_rows):
     today = seed(db)
     with db.transaction() as conn:
-        conn.execute("UPDATE instruments SET name='Fixture'")
+        conn.execute("UPDATE instruments SET name='Fixture',data=%s", (jsonb({"industry": "Textile"}),))
     target = today - timedelta(days=1)
     rows = [{**r, "day": target - timedelta(days=len(history_rows) - 1 - i)} for i, r in enumerate(history_rows)]
     with db.transaction() as conn:
@@ -263,8 +381,13 @@ def seed_analysis(db, history_rows):
                 )
         did = db.dataset(conn, "daily", "fixture-history", rows[:-1], {})
         fid = db.dataset(conn, "adj_factor", "fixture-history", rows, {})
+        bid = db.dataset(conn, "daily_basic", "fixture-history", rows, {})
         for row in rows:
             conn.execute("INSERT INTO factors VALUES('SH600895',%s,%s,1)", (row["day"], fid))
+            conn.execute(
+                "INSERT INTO daily_basics VALUES('SH600895',%s,%s,%s)",
+                (row["day"], bid, jsonb({"pe_ttm": 12.0, "pb": 1.2, "pe": 11.0})),
+            )
         for row in rows[:-1]:
             conn.execute("INSERT INTO daily_bars VALUES('SH600895',%s,%s,%s)", (row["day"], did, jsonb(row["data"])))
     return target, rows
@@ -283,10 +406,16 @@ def test_collection_analysis_manual_candidate_approval(db, settings, history_row
     )
     history(db, feed, job(db, "daily", payload={"day": str(target)}))
     assert db.setting("analysis_dirty")
+    with db.transaction() as conn:
+        save_holding(conn, HoldingInput(symbol="SH600895", cost_price=1))
     daily(db, job(db, "analyze", payload={"day": str(target)}), settings)
     saved = db.rows("SELECT * FROM reports WHERE kind='screen'")[0]
     assert saved["data"]["status"] == "complete"
     assert saved["data"]["candidates"][0]["symbol"] == "SH600895"
+    assert saved["data"]["candidates"][0]["pe_ttm"] == 12
+    assert saved["data"]["disclaimer"]
+    holding = db.rows("SELECT data FROM reports WHERE kind='holding'")[0]["data"]
+    assert holding["symbol"] == "SH600895" and holding["action"] == "review_reduce"
     assert not db.rows("SELECT * FROM baskets"), "Screening cannot automatically change baskets"
     stock = db.rows("SELECT data FROM reports WHERE kind='stock'")[0]["data"]
     assert stock["data_versions"][-1][0] == db.setting("analysis_dirty")["daily"]

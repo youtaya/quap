@@ -24,10 +24,18 @@ class Settings(BaseSettings):
     qlib_enabled: bool = False
     provider: str = "tushare"
     environment: str = "production"
+    notify_email: str = "jxiaoping@gmail.com"
+    smtp_host: str = "smtp.gmail.com"
+    smtp_port: int = Field(587, ge=1, le=65535)
+    smtp_user: str = "jxiaoping@gmail.com"
+    smtp_password: SecretStr = SecretStr("")
+    smtp_password_file: Path | None = None
+    smtp_from: str = ""
+    smtp_starttls: bool = True
 
     @model_validator(mode="after")
     def validate_secrets(self):
-        for name in ("database_url", "api_token", "tushare_token"):
+        for name in ("database_url", "api_token", "tushare_token", "smtp_password"):
             path = getattr(self, name + "_file")
             if path:
                 setattr(self, name, SecretStr(path.read_text(encoding="utf-8").strip()))

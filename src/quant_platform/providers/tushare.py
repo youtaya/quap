@@ -12,9 +12,10 @@ from quant_platform.storage import jsonb
 from . import Deferred, PermissionDenied, ProviderError
 
 FIELDS = {
-    "stock_basic": "ts_code,symbol,name,exchange,list_status,list_date,delist_date",
+    "stock_basic": "ts_code,symbol,name,exchange,industry,list_status,list_date,delist_date",
     "trade_cal": "exchange,cal_date,is_open,pretrade_date",
     "daily": "ts_code,trade_date,open,high,low,close,pre_close,vol,amount",
+    "daily_basic": "ts_code,trade_date,pe,pe_ttm,pb,ps,ps_ttm,dv_ratio,total_mv,circ_mv,turnover_rate",
     "index_daily": "ts_code,trade_date,open,high,low,close,pre_close,vol,amount",
     "adj_factor": "ts_code,trade_date,adj_factor",
     "suspend_d": "ts_code,trade_date,suspend_type",
@@ -243,6 +244,8 @@ class Tushare:
                 if factor is None or factor <= 0:
                     raise ProviderError("Invalid adjustment factor.")
                 result.append({"symbol": code, "day": day, "factor": factor})
+            elif endpoint == "daily_basic":
+                result.append(parse_basic(row))
             else:
                 result.append(parse_bar(row))
         return result
@@ -284,6 +287,23 @@ def parse_bar(row):
         **prices(row),
         "volume": positive(row.get("vol"), 100),
         "turnover": positive(row.get("amount"), 1000),
+    }
+
+
+def parse_basic(row):
+    """Keep missing valuation fields as None; never coerce blanks to zero."""
+    return {
+        "symbol": symbol(row["ts_code"]),
+        "day": parse_date(row["trade_date"]),
+        "pe": number(row.get("pe")),
+        "pe_ttm": number(row.get("pe_ttm")),
+        "pb": number(row.get("pb")),
+        "ps": number(row.get("ps")),
+        "ps_ttm": number(row.get("ps_ttm")),
+        "dv_ratio": number(row.get("dv_ratio")),
+        "total_mv": number(row.get("total_mv")),
+        "circ_mv": number(row.get("circ_mv")),
+        "turnover_rate": number(row.get("turnover_rate")),
     }
 
 

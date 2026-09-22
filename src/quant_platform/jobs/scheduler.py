@@ -13,6 +13,7 @@ def tick(db, settings, at=None):
     open_today = db.calendar_open(day)
     baskets = db.active_baskets(day)
     tracked = {code for basket in baskets if not basket["paused"] for code in basket["data"]["members"]}
+    tracked.update(r["symbol"] for r in db.active_holdings())
     instruments = db.rows("SELECT symbol FROM instruments WHERE status='L' ORDER BY symbol")
     symbols = [r["symbol"] for r in instruments]
     reference = db.setting("directory", {})
@@ -67,11 +68,12 @@ def tick(db, settings, at=None):
                 # Historical records are durable checkpoints. Recent dates revalidate daily; all dates weekly.
                 cycle = str(day) if index < 5 else str(day - timedelta(days=day.weekday()))
                 db.enqueue(conn, "daily", "history", f"daily:{date}:{cycle}", {"day": str(date)}, 100 - min(index, 99))
+                db.enqueue(conn, "basics", "history", f"basics:{date}:{cycle}", {"day": str(date)}, 90 - min(index, 89))
             pending = conn.execute(
-                "SELECT 1 FROM jobs WHERE kind='daily' AND status IN ('pending','running') LIMIT 1"
+                "SELECT 1 FROM jobs WHERE kind IN ('daily','basics') AND status IN ('pending','running') LIMIT 1"
             ).fetchone()
             watermark = conn.execute(
-                "SELECT coalesce(max(id),0) AS id FROM datasets WHERE endpoint IN ('daily','adj_factor')"
+                "SELECT coalesce(max(id),0) AS id FROM datasets WHERE endpoint IN ('daily','adj_factor','daily_basic')"
             ).fetchone()["id"]
             if watermark:
                 # Debounce backfills: partial reports every 15 minutes, complete reports when collection drains.
@@ -93,3 +95,5 @@ def tick(db, settings, at=None):
             )
         db.enqueue(conn, "maintenance", "operations", f"maintenance:{int(at.timestamp()) // 3600}", priority=10)
         db.enqueue(conn, "backup", "operations", f"backup:{day}")
+        if local.time() >= time(9):
+            db.enqueue(conn, "notify", "operations", f"notify:{day}", {"day": str(day)}, 80)

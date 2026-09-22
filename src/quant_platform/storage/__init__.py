@@ -175,6 +175,26 @@ class Database:
             (code, as_of, watermark, watermark, limit, code, watermark, watermark),
         )
 
+    def basics_window(self, as_of, limit=500, watermark=None):
+        rows = self.rows(
+            "WITH ranked AS ("
+            "SELECT symbol,day,data,dataset_id,row_number() OVER "
+            "(PARTITION BY symbol,day ORDER BY dataset_id DESC) AS revision_rank "
+            "FROM daily_basics WHERE day<=%s AND (%s::bigint IS NULL OR dataset_id<=%s)"
+            "), latest AS ("
+            "SELECT symbol,day,data,dataset_id,row_number() OVER "
+            "(PARTITION BY symbol ORDER BY day DESC) AS age FROM ranked WHERE revision_rank=1"
+            ") SELECT symbol,day,data,dataset_id FROM latest WHERE age<=%s ORDER BY symbol,day",
+            (as_of, watermark, watermark, limit),
+        )
+        result = {}
+        for row in rows:
+            result.setdefault(row["symbol"], []).append(row)
+        return result
+
+    def active_holdings(self):
+        return self.rows("SELECT * FROM holdings WHERE NOT archived ORDER BY symbol")
+
     def active_baskets(self, day):
         return self.rows(
             "SELECT b.id,r.data->>'name' AS name,b.paused,r.revision,r.effective_day,r.data FROM baskets b JOIN LATERAL "

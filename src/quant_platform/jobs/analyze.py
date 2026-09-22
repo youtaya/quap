@@ -2,8 +2,8 @@
 
 from datetime import date, datetime, timedelta
 
-from quant_platform.analysis import ANALYSIS_VERSION, basket_summary, indicators, screen
-from quant_platform.domain import CN, ScreenRule, digest, fresh, now, session
+from quant_platform.analysis import ANALYSIS_VERSION, basket_summary, holding_advice, indicators, screen
+from quant_platform.domain import CN, HoldingPolicy, ScreenRule, digest, fresh, now, number, session
 from quant_platform.storage import jsonb
 
 
@@ -45,11 +45,42 @@ def alert(conn, key, observation, value, threshold, cooldown, data, at):
     )
 
 
+def _latest_screen_candidates(db):
+    rows = db.rows("SELECT data FROM reports WHERE kind='screen' ORDER BY as_of DESC,id DESC LIMIT 1")
+    return (rows[0]["data"].get("candidates") or []) if rows else []
+
+
+def _stock_report_map(db, symbols):
+    if not symbols:
+        return {}
+    rows = db.rows(
+        "SELECT DISTINCT ON (target) target,data FROM reports WHERE kind='stock' AND target=ANY(%s) "
+        "ORDER BY target,as_of DESC,id DESC",
+        (symbols,),
+    )
+    return {row["target"]: row["data"] for row in rows}
+
+
+def _instrument_names(db, symbols):
+    if not symbols:
+        return {}
+    return {
+        row["symbol"]: row["name"]
+        for row in db.rows("SELECT symbol,name FROM instruments WHERE symbol=ANY(%s)", (symbols,))
+    }
+
+
 def intraday(db, job):
     at = now()
     day = at.astimezone(CN).date()
     quotes = {r["symbol"]: r["data"] for r in db.rows("SELECT * FROM latest_quotes")}
     baskets = db.active_baskets(day)
+    holdings = db.active_holdings()
+    holding_symbols = [row["symbol"] for row in holdings]
+    names = _instrument_names(db, holding_symbols)
+    stock_reports = _stock_report_map(db, holding_symbols)
+    candidates = _latest_screen_candidates(db)
+    policy = HoldingPolicy()
     active = session(at, db.calendar_open(day))[1]
     with db.publication(job) as conn:
         for basket in baskets:
@@ -62,16 +93,16 @@ def intraday(db, job):
                 "DO UPDATE SET data=excluded.data",
                 (basket["id"], basket["revision"], at.replace(second=0, microsecond=0), jsonb(data)),
             )
-            policy = basket["data"]["alerts"]
-            scope = digest((str(basket["id"]), basket["revision"], str(day), policy))
-            if active and data["coverage"] >= policy["minimum_coverage"]:
+            policy_basket = basket["data"]["alerts"]
+            scope = digest((str(basket["id"]), basket["revision"], str(day), policy_basket))
+            if active and data["coverage"] >= policy_basket["minimum_coverage"]:
                 alert(
                     conn,
                     scope,
                     data["observation"],
                     data["daily_return"],
-                    policy["basket_change"],
-                    policy["cooldown"],
+                    policy_basket["basket_change"],
+                    policy_basket["cooldown"],
                     {"target": basket["name"], "rule": "basket_daily_return"},
                     at,
                 )
@@ -90,11 +121,40 @@ def intraday(db, job):
                             scope + code,
                             identity,
                             q["close"] / q["pre_close"] - 1,
-                            policy["stock_change"],
-                            policy["cooldown"],
+                            policy_basket["stock_change"],
+                            policy_basket["cooldown"],
                             {"target": code, "rule": "stock_daily_return"},
                             at,
                         )
+        for holding in holdings:
+            quote = quotes.get(holding["symbol"], {})
+            data = holding_advice(
+                holding,
+                quote,
+                at,
+                stock_report=stock_reports.get(holding["symbol"]),
+                screen_candidates=candidates,
+                policy=policy,
+                name=names.get(holding["symbol"], ""),
+            )
+            data.update({"source": "tushare", "as_of": at.isoformat(), "holding_revision": holding["revision"]})
+            conn.execute(
+                "INSERT INTO holding_observations VALUES(%s,%s,%s,%s) ON CONFLICT(holding_id,revision,minute) "
+                "DO UPDATE SET data=excluded.data",
+                (holding["id"], holding["revision"], at.replace(second=0, microsecond=0), jsonb(data)),
+            )
+            if active and data.get("pnl_pct") is not None:
+                identity = digest({"last": data["last"], "cost_price": data["cost_price"], "pnl_pct": data["pnl_pct"]})
+                alert(
+                    conn,
+                    digest((str(holding["id"]), holding["revision"], str(day), policy.model_dump())),
+                    identity,
+                    data["pnl_pct"],
+                    policy.alert_change,
+                    policy.cooldown,
+                    {"target": holding["symbol"], "rule": "holding_cost_pnl"},
+                    at,
+                )
 
 
 def analysis_snapshot(db, job, target, settings):
@@ -116,6 +176,7 @@ def analysis_snapshot(db, job, target, settings):
                 "SELECT b.id,b.paused,r.revision,r.data FROM baskets b JOIN LATERAL "
                 "(SELECT * FROM basket_revisions WHERE basket_id=b.id AND effective_day<=%(day)s "
                 "ORDER BY effective_day DESC,revision DESC LIMIT 1) r ON true WHERE NOT b.archived) a),'[]'),"
+                "'holdings',coalesce((SELECT jsonb_agg(to_jsonb(h)) FROM holdings h WHERE NOT h.archived),'[]'),"
                 "'rule',(SELECT data FROM rules ORDER BY revision DESC LIMIT 1),"
                 "'rule_revision',(SELECT coalesce(max(revision),0) FROM rules)) AS snapshot",
                 {"day": target},
@@ -175,6 +236,7 @@ def daily(db, job, settings):
         for exchange in ("SSE", "SZSE")
     }
     snapshot_hash = digest(snapshot)
+    raw_closes = {}
     benchmark_rows = db.history("SH000300", target, snapshot["history_sessions"], snapshot["watermark"])
     benchmark = calendar_indicators([{**r, "factor": 1.0} for r in benchmark_rows], target, calendars["SSE"])
     for index, (code, instrument) in enumerate(instruments.items()):
@@ -199,6 +261,7 @@ def daily(db, job, settings):
                 else None
             )
         metrics[code] = result
+        raw_closes[code] = number(rows[-1]["data"].get("close")) if rows else None
         # Symbol-level report checkpoints survive an interrupted large analysis run.
         with db.transaction() as conn:
             db.fence(conn, job)
@@ -208,14 +271,16 @@ def daily(db, job, settings):
                     "UPDATE jobs SET progress=progress || %s WHERE id=%s",
                     (jsonb({"done": index + 1, "total": len(instruments)}), job["id"]),
                 )
-    output = screen(instruments, metrics, target, rule)
+    fundamentals = db.basics_window(target, rule.history_sessions, snapshot["watermark"])
+    output = screen(instruments, metrics, target, rule, fundamentals)
     output["rule_revision"] = snapshot["rule_revision"]
     output["dataset_watermark"] = snapshot["watermark"]
     output["snapshot_hash"] = snapshot_hash
     output["snapshot"] = snapshot
     output["inputs"] = {code: item.get("input_hash") for code, item in metrics.items()}
     output["status"] = "complete" if output["coverage"] == 1 else "partial"
-    baskets = snapshot["baskets"]
+    baskets = snapshot["baskets"] or []
+    holdings = snapshot.get("holdings") or []
     with db.publication(job) as conn:
         report(conn, "screen", "default", target, output)
         for basket in baskets:
@@ -243,6 +308,31 @@ def daily(db, job, settings):
                     "as_of": str(target),
                     "status": "complete" if coverage >= 1 - 1e-10 else "partial",
                     "interpretation": "Research indicators and risk flags; no trade execution or return guarantee.",
+                },
+            )
+        for holding in holdings:
+            advice = holding_advice(
+                holding,
+                last_close=raw_closes.get(holding["symbol"]),
+                stock_report=metrics.get(holding["symbol"]),
+                screen_candidates=output["candidates"],
+                name=(instruments.get(holding["symbol"]) or {}).get("name", ""),
+            )
+            report(
+                conn,
+                "holding",
+                holding["id"],
+                target,
+                {
+                    **advice,
+                    "holding_id": holding["id"],
+                    "holding_revision": holding["revision"],
+                    "snapshot_hash": snapshot_hash,
+                    "as_of": str(target),
+                    "quantity": holding.get("quantity"),
+                    "note": holding.get("note") or "",
+                    "status": "complete" if advice["action"] != "insufficient_data" else "partial",
+                    "interpretation": advice["disclaimer"],
                 },
             )
         db.set_setting(

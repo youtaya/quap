@@ -145,8 +145,49 @@ class ScreenRule(StrictModel):
     minimum_bars: int = Field(120, ge=61, le=2000)
     minimum_turnover: float = Field(20_000_000, ge=0)
     top_n: int = Field(20, ge=1, le=200)
-    momentum_weight: float = Field(0.6, ge=0, le=1)
     exclude_risk_names: bool = True
+    pe_weight: float = Field(0.4, ge=0, le=1)
+    pb_weight: float = Field(0.3, ge=0, le=1)
+    pe_history_weight: float = Field(0.2, ge=0, le=1)
+    pb_history_weight: float = Field(0.1, ge=0, le=1)
+    max_pe_ttm: float = Field(80, gt=0)
+    max_pb: float = Field(10, gt=0)
+    min_industry_peers: int = Field(8, ge=1, le=500)
+    history_sessions: int = Field(252, ge=2, le=2000)
+
+    @model_validator(mode="before")
+    @classmethod
+    def drop_unknown_fields(cls, value):
+        if isinstance(value, dict):
+            return {key: item for key, item in value.items() if key in cls.model_fields}
+        return value
+
+
+class HoldingPolicy(StrictModel):
+    exit_loss: float = Field(0.15, gt=0, le=1)
+    reduce_gain: float = Field(0.20, gt=0)
+    add_max_pnl: float = Field(0.02)
+    reduce_if_not_undervalued: bool = True
+    alert_change: float = Field(0.05, gt=0)
+    cooldown: int = Field(300, ge=1)
+
+
+class HoldingInput(StrictModel):
+    symbol: str
+    cost_price: float = Field(gt=0)
+    quantity: float | None = Field(None, gt=0)
+    note: str = Field("", max_length=500)
+    expected_revision: int = Field(0, ge=0)
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_symbol(cls, value):
+        return symbol(value)
+
+    @field_validator("note")
+    @classmethod
+    def strip_note(cls, value):
+        return value.strip()
 
 
 class HistoryRepository(Protocol):
