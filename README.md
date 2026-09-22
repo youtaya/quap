@@ -1,0 +1,22 @@
+# QUAP
+
+QUAP 是独立于 [Qlib](https://github.com/microsoft/qlib) 研究仓库的 A 股数据采集与篮子研究平台。Python 包名是 `quant_platform`，命令行入口是 `quant-platform`。主路径使用已授权的 Tushare 数据、PostgreSQL 和原生分析，安装与运行不导入 Qlib。
+
+覆盖范围是科创板、创业板和沪深主板。系统供单操作员研究与监控，审批由人工完成，不提交订单。
+
+## 文档
+
+- [系统框架](docs/系统框架.md)
+- [部署说明](docs/部署说明.md)
+- 架构图：[docs/architecture.svg](docs/architecture.svg)
+
+## 本地开发
+
+需要 Python 3.11 和 [uv](https://docs.astral.sh/uv/) 0.9.5。在仓库根目录：
+
+```bash
+uv sync --frozen --python 3.11 --group dev
+.venv/bin/quant-platform --help
+```
+
+运行中的服务、密钥和验收步骤见部署说明。可选的公开行情旧监控保存在 `legacy/`，只用于迁移和经批准的回滚。

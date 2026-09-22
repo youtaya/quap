@@ -1,0 +1,138 @@
+name: quant-platform
+x-app: &app
+  build:
+    context: ..
+    dockerfile: deploy/Dockerfile
+    target: native
+  restart: unless-stopped
+  init: true
+  read_only: true
+  tmpfs: [/tmp]
+  environment: &environment
+    QUANT_DATABASE_URL_FILE: /run/secrets/database_url
+    QUANT_API_TOKEN_FILE: /run/secrets/api_token
+    QUANT_TUSHARE_TOKEN_FILE: /run/secrets/tushare_token
+    QUANT_QLIB_ENABLED: ${QUANT_QLIB_ENABLED:-false}
+  secrets: [database_url, api_token, tushare_token]
+  volumes: [artifacts:/data/artifacts]
+  depends_on:
+    migrate: {condition: service_completed_successfully}
+  stop_grace_period: 90s
+  mem_limit: 2g
+  cpus: 2
+  logging:
+    driver: local
+    options: {max-size: 10m, max-file: "5"}
+
+services:
+  postgres:
+    image: postgres:16.10-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: quant
+      POSTGRES_USER: quant
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets: [postgres_password]
+    volumes: [postgres:/var/lib/postgresql/data]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U quant -d quant"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    mem_limit: 2g
+    logging:
+      driver: local
+      options: {max-size: 10m, max-file: "5"}
+  migrate:
+    <<: *app
+    restart: "no"
+    command: [migrate]
+    depends_on:
+      postgres: {condition: service_healthy}
+  api:
+    <<: *app
+    command: [api, --host, 0.0.0.0, --port, "8000"]
+    ports: ["127.0.0.1:8000:8000"]
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/live',timeout=5)"]
+      interval: 15s
+      timeout: 8s
+      retries: 3
+  scheduler:
+    <<: *app
+    command: [worker, --role, scheduler]
+    healthcheck:
+      test: [CMD, quant-platform, health, --role, scheduler]
+      interval: 15s
+      timeout: 12s
+      retries: 3
+  quotes:
+    <<: *app
+    command: [worker, --role, quotes]
+    healthcheck:
+      test: [CMD, quant-platform, health, --role, quotes]
+      interval: 15s
+      timeout: 12s
+      retries: 3
+  history:
+    <<: *app
+    command: [worker, --role, history]
+    healthcheck:
+      test: [CMD, quant-platform, health, --role, history]
+      interval: 15s
+      timeout: 12s
+      retries: 3
+  analysis:
+    <<: *app
+    command: [worker, --role, analysis]
+    healthcheck:
+      test: [CMD, quant-platform, health, --role, analysis]
+      interval: 15s
+      timeout: 12s
+      retries: 3
+  operations:
+    <<: *app
+    command: [worker, --role, operations]
+    volumes:
+      - artifacts:/data/artifacts
+      - ${QUANT_BACKUP_DIRECTORY:?Set QUANT_BACKUP_DIRECTORY to a UID-10001-writable backup destination}:/backups
+    healthcheck:
+      test: [CMD, quant-platform, health, --role, operations]
+      interval: 30s
+      timeout: 12s
+      retries: 3
+  dashboard:
+    <<: *app
+    command: [dashboard, --host, 0.0.0.0, --port, "8501"]
+    environment:
+      QUANT_API_URL: http://api:8000
+    secrets: []
+    volumes: []
+    ports: ["127.0.0.1:8501:8501"]
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health',timeout=5)"]
+      interval: 15s
+      timeout: 8s
+      retries: 3
+  qlib:
+    <<: *app
+    profiles: [qlib]
+    platform: linux/amd64
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: qlib
+    command: [worker, --role, qlib]
+    environment:
+      <<: *environment
+      QUANT_QLIB_ENABLED: "true"
+    mem_limit: 4g
+
+volumes:
+  postgres:
+  artifacts:
+secrets:
+  postgres_password: {file: ./secrets/postgres_password}
+  database_url: {file: ./secrets/database_url}
+  api_token: {file: ./secrets/api_token}
+  tushare_token: {file: ./secrets/tushare_token}

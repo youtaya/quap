@@ -1,0 +1,42 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "standalone-quant-platform"
+version = "0.1.0"
+description = "Persistent A-share data collection and basket research platform"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+  "fastapi>=0.115,<1", "uvicorn>=0.34,<1", "httpx>=0.28,<1",
+  "psycopg[binary,pool]>=3.2,<4", "sqlalchemy>=2.0,<3", "alembic>=1.15,<2",
+  "numpy>=1.26,<3", "pandas>=2.2,<3", "pydantic-settings>=2.8,<3",
+  "streamlit>=1.52,<2", "pyyaml>=6,<7", "filelock>=3.16,<4",
+]
+
+[project.optional-dependencies]
+qlib = ["pyqlib==0.9.7", "numpy<2", "mlflow>=2.18,<3", "protobuf>=5.26.1,<6"]
+
+[project.scripts]
+quant-platform = "quant_platform.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8,<10", "black>=25,<27", "build>=1.2,<2"]
+
+[tool.hatch.build]
+exclude = ["**/__pycache__", "**/*.pyc", ".venv", ".runtime", "deploy/secrets", "dist"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/quant_platform", "tests", "deploy/Dockerfile", "deploy/compose.yaml", "deploy/compose.local.yaml", "deploy/prepare_local.py", ".dockerignore", "pyproject.toml", "uv.lock"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/quant_platform"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+markers = ["postgres: requires QUANT_TEST_DATABASE_URL pointing at an isolated PostgreSQL database"]
+
+[tool.black]
+line-length = 120
+target-version = ["py311"]

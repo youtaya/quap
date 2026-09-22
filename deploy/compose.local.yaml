@@ -1,0 +1,4 @@
+# Local Docker only: persistent backups in Docker storage, not off-host recovery.
+# Invoke with QUANT_BACKUP_DIRECTORY=local-backups and both Compose files.
+volumes:
+  local-backups:

@@ -1,0 +1,5 @@
+# Dashboard environment: Python 3.10 or newer; install Qlib separately.
+streamlit>=1.52,<2
+requests>=2.31,<3
+# Shared compatibility range for Streamlit and Qlib installations using MLflow 2.x.
+protobuf>=5.26.1,<6
