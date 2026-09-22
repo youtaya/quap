@@ -133,6 +133,26 @@ def test_dashboard_basket_editor_sends_policy_and_revision(monkeypatch):
     assert payload["members"] == {"SH600895": 1}
 
 
+def test_dashboard_holding_editor_sends_cost(monkeypatch):
+    calls = []
+
+    def request(self, method, path, data=None):
+        calls.append((method, path, data))
+        if method == "POST" and path == "/holdings":
+            return {"revision": 1, "id": "00000000-0000-0000-0000-000000000001", "symbol": "SH600895"}
+        return fake_request(self, method, path, data)
+
+    app = signed_app(monkeypatch)
+    monkeypatch.setattr(client.Client, "request", request)
+    app.sidebar.radio[0].set_value("Holdings").run()
+    next(b for b in app.button if b.label == "Save holding").click().run()
+    assert not app.exception
+    payload = next(data for method, path, data in calls if method == "POST" and path == "/holdings")
+    assert payload["expected_revision"] == 0
+    assert payload["symbol"] == "SH600895"
+    assert payload["cost_price"] > 0
+
+
 def test_package_build_excludes_runtime_and_secrets():
     import tomllib
 
@@ -236,6 +256,7 @@ def test_built_distribution_contents():
         names = archive.namelist()
         assert "quant_platform/storage/schema.sql" in names
         assert "quant_platform/storage/migrations/versions/0002_recovery.py" in names
+        assert "quant_platform/storage/migrations/versions/0003_value_holdings.py" in names
         assert not any(name.startswith(("tests/", "qlib/")) or "__pycache__" in name for name in names)
         metadata = archive.read("standalone_quant_platform-0.1.0.dist-info/METADATA").decode()
         for line in metadata.splitlines():

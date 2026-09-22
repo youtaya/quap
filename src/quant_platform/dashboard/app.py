@@ -15,13 +15,14 @@ st.set_page_config(
     page_title="Quant Platform",
     page_icon="📈",
     layout="wide",
-    menu_items={"About": "A-share Quant Platform · Entitled market data · Versioned baskets · No order execution"},
+    menu_items={"About": "A-share Quant Platform · Relative valuation · Cost-basis holdings · No order execution"},
 )
 
 REQUIRED_ENDPOINTS = ("stock_basic", "trade_cal", "daily", "adj_factor", "rt_k")
 WORKSPACES = {
     "Operations": "🛰️ Operations",
     "Baskets": "🧺 Baskets",
+    "Holdings": "📒 Holdings",
     "Stocks": "📈 Stocks",
     "Candidates": "🔎 Candidates",
     "Reports": "🗂️ Reports",
@@ -71,7 +72,7 @@ def ribbon(pills):
 
 st.markdown(
     '<div class="qp-header"><span class="qp-title">A-share Quant Platform</span>'
-    '<span class="qp-tag">Continuous research · Entitled market data · Versioned baskets · No order execution</span>'
+    '<span class="qp-tag">Research suggestions · Relative valuation · Cost-basis holdings · No order execution</span>'
     "</div>",
     unsafe_allow_html=True,
 )
@@ -245,6 +246,33 @@ def basket_history(basket_id):
         st.info("No observations for this basket yet; pending revisions activate next trading session.")
 
 
+@st.fragment(run_every=10)
+def holding_history(holding_id):
+    observations = call("GET", f"/holdings/{holding_id}/observations") or []
+    if observations:
+        records = [
+            {
+                "time": o["minute"],
+                "pnl": o["data"].get("pnl_pct"),
+                "series": f"revision {o['revision']} · {pd.Timestamp(o['minute']).tz_convert('Asia/Shanghai').date()}",
+            }
+            for o in observations
+        ]
+        frame = pd.DataFrame(records).pivot(index="time", columns="series", values="pnl").sort_index()
+        st.line_chart(frame)
+        st.caption("P&L versus cost basis, not a return guarantee. Fresh quotes only; stale ticks are not used.")
+        latest = observations[0]["data"]
+        a, b, c, d = st.columns(4)
+        a.metric("Action", latest.get("action", "—"))
+        b.metric("P&L", f"{latest['pnl_pct']:.1%}" if latest.get("pnl_pct") is not None else "—")
+        c.metric("Last", latest.get("last") if latest.get("last") is not None else "—")
+        d.metric("Cost", latest.get("cost_price") if latest.get("cost_price") is not None else "—")
+        st.caption(latest.get("disclaimer") or "")
+        st.json(latest)
+    else:
+        st.info("No holding observations yet. Quotes prioritize active holdings during a verified session.")
+
+
 if page == "Operations":
     operations()
 elif page == "Baskets":
@@ -321,6 +349,64 @@ elif page == "Baskets":
         st.dataframe(
             call("GET", f"/baskets/{selected['id']}/revisions") or [], hide_index=True, use_container_width=True
         )
+elif page == "Holdings":
+    holdings = call("GET", "/holdings") or []
+    ribbon(
+        [
+            pill(f"{len(holdings)} active holdings", "info"),
+            pill("Research suggestions only", "warn"),
+        ]
+    )
+    st.caption(
+        "Cost is the current share-equivalent CNY price you entered. The platform does not adjust your cost for corporate actions."
+    )
+    choices = {"New holding": None, **{f"{h['symbol']} · {h['id']}": h for h in holdings}}
+    selected = choices[st.selectbox("Holding", list(choices))]
+    source = selected or {}
+    with st.form("holding_editor"):
+        code = st.text_input("Symbol", value=source.get("symbol", "SH600895"))
+        cost = st.number_input(
+            "Cost price (CNY)", min_value=0.01, value=float(source.get("cost_price") or 10.0), format="%.4f"
+        )
+        quantity_raw = st.text_input(
+            "Quantity (optional)",
+            value="" if source.get("quantity") in (None, "") else str(source.get("quantity")),
+        )
+        note = st.text_input("Note", value=source.get("note") or "")
+        if st.form_submit_button("Save holding"):
+            try:
+                quantity = float(quantity_raw) if quantity_raw.strip() else None
+                payload = {
+                    "symbol": code,
+                    "cost_price": cost,
+                    "quantity": quantity,
+                    "note": note,
+                    "expected_revision": selected["revision"] if selected else 0,
+                }
+                result = call(
+                    "PUT" if selected else "POST",
+                    f"/holdings/{selected['id']}" if selected else "/holdings",
+                    payload,
+                )
+                if result:
+                    st.success(result)
+                    st.rerun()
+            except (ValueError, TypeError):
+                st.error("Quantity must be a positive number or blank.")
+    if selected:
+        st.caption(f"Revision {selected['revision']}. Advice is research-only and never submitted as an order.")
+        reports = call("GET", "/reports?kind=holding&target=" + quote(str(selected["id"])) + "&limit=1") or []
+        if reports:
+            st.json(reports[0]["data"])
+        if st.button("Archive holding"):
+            result = call(
+                "POST",
+                f"/holdings/{selected['id']}/control",
+                {"action": "archive", "expected_revision": selected["revision"]},
+            )
+            if result:
+                st.rerun()
+        holding_history(selected["id"])
 elif page == "Stocks":
     search = st.text_input("Search symbol or company")
     st.dataframe(call("GET", "/instruments?search=" + quote(search)) or [], hide_index=True, use_container_width=True)
@@ -332,6 +418,11 @@ elif page == "Stocks":
             st.line_chart(frame.set_index("day")[["close"]])
             st.caption("Unadjusted CNY; current charts are independent of the optional Qlib adapter.")
         st.json(call("GET", "/reports?kind=stock&target=" + quote(code) + "&limit=1") or [])
+        holdings = call("GET", "/holdings") or []
+        owned = next((h for h in holdings if h.get("symbol") == code), None)
+        if owned:
+            st.subheader("Active holding")
+            st.json(call("GET", "/reports?kind=holding&target=" + quote(str(owned["id"])) + "&limit=1") or owned)
 elif page == "Candidates":
     current = call("GET", "/rules")
     if current:
@@ -345,17 +436,44 @@ elif page == "Candidates":
     reports = call("GET", "/reports?kind=screen&limit=1") or []
     if reports:
         report = reports[0]
-        st.caption(f"As of {report['as_of']} | Coverage {report['data']['coverage']:.1%}")
-        st.dataframe(report["data"]["candidates"], hide_index=True, use_container_width=True)
-        codes = [c["symbol"] for c in report["data"]["candidates"]]
+        st.caption(
+            f"As of {report['as_of']} | History coverage {report['data']['coverage']:.1%} | "
+            f"Fundamentals {report['data'].get('fundamentals_coverage', 0):.1%}"
+        )
+        st.caption(report["data"].get("disclaimer") or "Research suggestion; not an order or return guarantee.")
+        candidates = report["data"]["candidates"]
+        if candidates:
+            st.dataframe(
+                [
+                    {
+                        k: row.get(k)
+                        for k in (
+                            "symbol",
+                            "score",
+                            "pe_ttm",
+                            "pb",
+                            "industry",
+                            "peer_scope",
+                            "reasons",
+                            "action",
+                        )
+                    }
+                    for row in candidates
+                ],
+                hide_index=True,
+                use_container_width=True,
+            )
+        codes = [c["symbol"] for c in candidates]
         selected = st.multiselect("Approve selected candidates", codes)
         name = st.text_input("Approved basket name", "Reviewed candidates")
         if st.button("Create next-session basket", disabled=not selected):
             st.info(call("POST", f"/candidates/{report['id']}/approve", {"name": name, "symbols": selected}))
         with st.expander("Exclusions and provenance"):
             st.json(report["data"])
+    else:
+        st.info("No valuation screen yet. Collection of daily_basic and analysis run in background workers.")
 else:
-    kind = st.selectbox("Report type", ["basket", "stock", "screen"])
+    kind = st.selectbox("Report type", ["basket", "stock", "screen", "holding"])
     reports = call("GET", "/reports?kind=" + kind) or []
     if reports:
         chosen = st.selectbox("Report", reports, format_func=lambda r: f"{r['as_of']} · {r['target']} · #{r['id']}")

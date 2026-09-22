@@ -7,7 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from quant_platform.api import create_app
-from quant_platform.domain import CN, BasketInput, now
+from quant_platform.domain import CN, BasketInput, HoldingInput, now
 from quant_platform.jobs.scheduler import tick
 from quant_platform.jobs.worker import Worker
 from quant_platform.operations import board_status, doctor, maintenance, qualification
@@ -15,6 +15,7 @@ from quant_platform.providers import Deferred, PermissionDenied
 from quant_platform.providers.tushare import Tushare
 from quant_platform.storage import jsonb
 from quant_platform.storage.baskets import Conflict, save_basket
+from quant_platform.storage.holdings import save_holding
 from test_postgres import seed
 from test_provider import row
 
@@ -193,6 +194,17 @@ def test_doctor_only_unblocks_revalidated_dependencies(db, settings):
     assert states == {"directory": "pending", "daily": "blocked", "quotes": "blocked", "qlib_export": "blocked"}
 
 
+def test_scheduler_quotes_include_active_holdings(db, settings):
+    day = seed(db)
+    at = datetime.combine(day, datetime.min.time(), CN).replace(hour=10)
+    with db.transaction() as conn:
+        db.set_setting(conn, "directory", {"fetched_at": (at - timedelta(hours=50)).isoformat()})
+        save_holding(conn, HoldingInput(symbol="SH600895", cost_price=10))
+    tick(db, settings, at)
+    payloads = [r["payload"]["symbols"] for r in db.rows("SELECT payload FROM jobs WHERE kind='quotes'")]
+    assert payloads and "SH600895" in payloads[0]
+
+
 def test_retention_preserves_recent_rows_and_records_incidents(db, settings, tmp_path):
     settings.artifact_root = tmp_path
     with db.transaction() as conn:
@@ -252,7 +264,7 @@ def test_gapped_stock_and_benchmark_metrics_are_unavailable(history_rows):
 def seed_analysis(db, history_rows):
     today = seed(db)
     with db.transaction() as conn:
-        conn.execute("UPDATE instruments SET name='Fixture'")
+        conn.execute("UPDATE instruments SET name='Fixture',data=%s", (jsonb({"industry": "Textile"}),))
     target = today - timedelta(days=1)
     rows = [{**r, "day": target - timedelta(days=len(history_rows) - 1 - i)} for i, r in enumerate(history_rows)]
     with db.transaction() as conn:
@@ -263,8 +275,13 @@ def seed_analysis(db, history_rows):
                 )
         did = db.dataset(conn, "daily", "fixture-history", rows[:-1], {})
         fid = db.dataset(conn, "adj_factor", "fixture-history", rows, {})
+        bid = db.dataset(conn, "daily_basic", "fixture-history", rows, {})
         for row in rows:
             conn.execute("INSERT INTO factors VALUES('SH600895',%s,%s,1)", (row["day"], fid))
+            conn.execute(
+                "INSERT INTO daily_basics VALUES('SH600895',%s,%s,%s)",
+                (row["day"], bid, jsonb({"pe_ttm": 12.0, "pb": 1.2, "pe": 11.0})),
+            )
         for row in rows[:-1]:
             conn.execute("INSERT INTO daily_bars VALUES('SH600895',%s,%s,%s)", (row["day"], did, jsonb(row["data"])))
     return target, rows
@@ -283,10 +300,16 @@ def test_collection_analysis_manual_candidate_approval(db, settings, history_row
     )
     history(db, feed, job(db, "daily", payload={"day": str(target)}))
     assert db.setting("analysis_dirty")
+    with db.transaction() as conn:
+        save_holding(conn, HoldingInput(symbol="SH600895", cost_price=1))
     daily(db, job(db, "analyze", payload={"day": str(target)}), settings)
     saved = db.rows("SELECT * FROM reports WHERE kind='screen'")[0]
     assert saved["data"]["status"] == "complete"
     assert saved["data"]["candidates"][0]["symbol"] == "SH600895"
+    assert saved["data"]["candidates"][0]["pe_ttm"] == 12
+    assert saved["data"]["disclaimer"]
+    holding = db.rows("SELECT data FROM reports WHERE kind='holding'")[0]["data"]
+    assert holding["symbol"] == "SH600895" and holding["action"] == "review_reduce"
     assert not db.rows("SELECT * FROM baskets"), "Screening cannot automatically change baskets"
     stock = db.rows("SELECT data FROM reports WHERE kind='stock'")[0]["data"]
     assert stock["data_versions"][-1][0] == db.setting("analysis_dirty")["daily"]

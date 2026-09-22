@@ -16,9 +16,10 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import Field
 
 from quant_platform.config import Settings
-from quant_platform.domain import BasketInput, CN, ScreenRule, StrictModel, fresh, now, symbol
+from quant_platform.domain import BasketInput, CN, HoldingInput, ScreenRule, StrictModel, fresh, now, symbol
 from quant_platform.storage import Database, jsonb
 from quant_platform.storage.baskets import Conflict, save_basket
+from quant_platform.storage.holdings import save_holding
 
 
 class Control(StrictModel):
@@ -44,6 +45,11 @@ class RuleInput(StrictModel):
 class Approval(StrictModel):
     name: str = Field(min_length=1, max_length=120)
     symbols: list[str] = Field(min_length=1, max_length=200)
+
+
+class HoldingControl(StrictModel):
+    action: Literal["archive"]
+    expected_revision: int = Field(ge=1)
 
 
 def create_app(settings=None, database=None):
@@ -244,6 +250,43 @@ def create_app(settings=None, database=None):
             )
         return {"applied": True}
 
+    @router.get("/holdings")
+    def holdings(store=Depends(db)):
+        return store.rows("SELECT * FROM holdings WHERE NOT archived ORDER BY created_at")
+
+    @router.post("/holdings", status_code=201)
+    def create_holding(value: HoldingInput, store=Depends(db)):
+        with store.transaction() as conn:
+            return save_holding(conn, value)
+
+    @router.put("/holdings/{holding_id}")
+    def edit_holding(holding_id: UUID, value: HoldingInput, store=Depends(db)):
+        with store.transaction() as conn:
+            return save_holding(conn, value, holding_id)
+
+    @router.get("/holdings/{holding_id}/observations")
+    def holding_observations(holding_id: UUID, store=Depends(db)):
+        return store.rows(
+            "SELECT * FROM holding_observations WHERE holding_id=%s ORDER BY minute DESC LIMIT 600",
+            (holding_id,),
+        )
+
+    @router.post("/holdings/{holding_id}/control")
+    def holding_control(holding_id: UUID, value: HoldingControl, store=Depends(db)):
+        with store.transaction() as conn:
+            row = conn.execute("SELECT * FROM holdings WHERE id=%s FOR UPDATE", (holding_id,)).fetchone()
+            if not row or row["archived"] or row["revision"] != value.expected_revision:
+                raise Conflict("Holding revision conflict or archived holding.")
+            conn.execute(
+                "UPDATE holdings SET archived=true,revision=revision+1,updated_at=now() WHERE id=%s",
+                (holding_id,),
+            )
+            conn.execute(
+                "INSERT INTO audit(action,target,data) VALUES(%s,%s,%s)",
+                ("holding_" + value.action, str(holding_id), jsonb(value.model_dump())),
+            )
+        return {"applied": True}
+
     @router.get("/rules")
     def rules(store=Depends(db)):
         rows = store.rows("SELECT * FROM rules ORDER BY revision DESC LIMIT 1")
@@ -266,7 +309,7 @@ def create_app(settings=None, database=None):
 
     @router.get("/reports")
     def reports(
-        kind: Literal["stock", "basket", "screen"] = "basket",
+        kind: Literal["stock", "basket", "screen", "holding"] = "basket",
         target: str | None = None,
         limit: int = Query(100, ge=1, le=500),
         store=Depends(db),

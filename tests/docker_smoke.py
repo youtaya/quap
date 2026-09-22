@@ -47,6 +47,7 @@ def fixture_worker(role):
                     "list_date": at.date() - timedelta(days=1000),
                     "delist_date": None,
                     "list_status": "L",
+                    "industry": "Textile",
                 }
             }
 
@@ -64,18 +65,26 @@ def fixture_worker(role):
             ]
 
         def daily_partition(self, endpoint, day, codes, job=None):
-            return [
-                {
-                    "symbol": code,
-                    "day": day,
-                    **(
-                        {"factor": 1}
-                        if endpoint == "adj_factor"
-                        else {"open": 10, "close": 10, "high": 11, "low": 9, "volume": 1000000, "turnover": 30000000}
-                    ),
-                }
-                for code in sorted(codes)
-            ]
+            rows = []
+            for code in sorted(codes):
+                if endpoint == "adj_factor":
+                    rows.append({"symbol": code, "day": day, "factor": 1})
+                elif endpoint == "daily_basic":
+                    rows.append({"symbol": code, "day": day, "pe_ttm": 12.0, "pb": 1.2, "pe": 11.0})
+                else:
+                    rows.append(
+                        {
+                            "symbol": code,
+                            "day": day,
+                            "open": 10,
+                            "close": 10,
+                            "high": 11,
+                            "low": 9,
+                            "volume": 1000000,
+                            "turnover": 30000000,
+                        }
+                    )
+            return rows
 
         def quotes(self, codes):
             return [
@@ -270,7 +279,7 @@ def main():
         backup(db, settings, item)
         state = db.setting("backup")
         restored = restore_check(settings.backup_root / state["file"], restore_dsn, db)
-        assert restored["schema"] == "0002" and db.setting("backup")["restore_verified"]
+        assert restored["schema"] == "0003" and db.setting("backup")["restore_verified"]
         with psycopg.connect(restore_dsn) as restored_db:
             assert restored_db.execute("SELECT value FROM settings WHERE key='smoke-sentinel'").fetchone()[0] == {
                 "persisted": True

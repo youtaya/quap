@@ -123,3 +123,30 @@ def test_api_auth_and_versioned_mutations(db, settings):
         assert client.get("/api/v1/status").status_code == 200
         assert client.post("/api/v1/control", json={"action": "pause"}).status_code == 202
         assert db.setting("polling_paused") is True
+        holding = client.post("/api/v1/holdings", json={"symbol": "SH600895", "cost_price": 10.5, "quantity": 100})
+        assert holding.status_code == 201, holding.text
+        hid = holding.json()["id"]
+        assert client.get("/api/v1/holdings").json()[0]["cost_price"] == 10.5
+        assert client.put(f"/api/v1/holdings/{hid}", json={"symbol": "SH600895", "cost_price": 11}).status_code == 409
+        assert (
+            client.put(
+                f"/api/v1/holdings/{hid}",
+                json={"symbol": "SH600895", "cost_price": 11, "expected_revision": 1},
+            ).status_code
+            == 200
+        )
+        assert client.post("/api/v1/holdings", json={"symbol": "SH600895", "cost_price": 9}).status_code == 409
+        assert (
+            client.post(
+                f"/api/v1/holdings/{hid}/control", json={"action": "archive", "expected_revision": 1}
+            ).status_code
+            == 409
+        )
+        assert (
+            client.post(
+                f"/api/v1/holdings/{hid}/control", json={"action": "archive", "expected_revision": 2}
+            ).status_code
+            == 200
+        )
+        assert client.get("/api/v1/holdings").json() == []
+        assert client.get("/api/v1/reports?kind=holding").status_code == 200

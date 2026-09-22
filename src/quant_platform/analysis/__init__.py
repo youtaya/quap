@@ -6,9 +6,10 @@ import numpy as np
 import pandas as pd
 
 from quant_platform import __version__
-from quant_platform.domain import ScreenRule, digest, fresh, number
+from quant_platform.domain import HoldingPolicy, ScreenRule, digest, fresh, number
 
-ANALYSIS_VERSION = __version__ + ":native-2"
+ANALYSIS_VERSION = __version__ + ":native-3"
+DISCLAIMER = "Research suggestion; not an order, recommendation to trade, or return guarantee."
 
 
 def wilder(series, periods=14):
@@ -114,11 +115,46 @@ def basket_summary(members, quotes, at):
     }
 
 
-def screen(instruments, metrics, day, rule=None):
+def _industry(stock):
+    payload = stock.get("data") if isinstance(stock.get("data"), dict) else {}
+    return str(payload.get("industry") or stock.get("industry") or "").strip()
+
+
+def _current_basic(rows, day):
+    if not rows:
+        return None
+    last = rows[-1]
+    last_day = str(last.get("day") or (last.get("data") or {}).get("day") or "")
+    if last_day != str(day):
+        return None
+    data = last.get("data") if isinstance(last.get("data"), dict) and "pe_ttm" in last.get("data", {}) else last
+    return data
+
+
+def _own_percentile(rows, field, current, limit):
+    values = []
+    for row in rows:
+        data = row.get("data") if isinstance(row.get("data"), dict) and field in row.get("data", {}) else row
+        value = number(data.get(field))
+        if value is not None and value > 0:
+            values.append(value)
+    values = values[-limit:]
+    if current is None or current <= 0 or not values:
+        return None
+    if values[-1] != current:
+        values.append(current)
+    return float(pd.Series(values).rank(pct=True, method="average").iloc[-1])
+
+
+def screen(instruments, metrics, day, rule=None, fundamentals=None):
     rule = rule or ScreenRule()
+    fundamentals = fundamentals or {}
     eligible, excluded = [], {}
     for code, stock in sorted(instruments.items()):
         item = metrics.get(code, {})
+        basic = _current_basic(fundamentals.get(code) or [], day)
+        pe_ttm = number((basic or {}).get("pe_ttm"))
+        pb = number((basic or {}).get("pb"))
         reasons = []
         if stock.get("status", "L") != "L":
             reasons.append("not_currently_verified_listed")
@@ -130,23 +166,88 @@ def screen(instruments, metrics, day, rule=None):
             reasons.append("missing_or_unadjusted_latest_history")
         if item.get("average_turnover20") is None or item["average_turnover20"] < rule.minimum_turnover:
             reasons.append("liquidity")
-        if item.get("return20") is None or item.get("volatility20") is None:
-            reasons.append("indicators_unavailable")
+        if basic is None:
+            reasons.append("missing_fundamentals")
+        else:
+            if pe_ttm is None or pe_ttm <= 0:
+                reasons.append("non_positive_pe_ttm")
+            elif pe_ttm > rule.max_pe_ttm:
+                reasons.append("pe_ttm_above_cap")
+            if pb is None or pb <= 0:
+                reasons.append("non_positive_pb")
+            elif pb > rule.max_pb:
+                reasons.append("pb_above_cap")
         if reasons:
             excluded[code] = reasons
         else:
-            eligible.append({"symbol": code, **item})
+            eligible.append(
+                {
+                    "symbol": code,
+                    "industry": _industry(stock),
+                    "pe_ttm": pe_ttm,
+                    "pb": pb,
+                    "pe_history_pct": _own_percentile(
+                        fundamentals.get(code) or [], "pe_ttm", pe_ttm, rule.history_sessions
+                    ),
+                    "pb_history_pct": _own_percentile(fundamentals.get(code) or [], "pb", pb, rule.history_sessions),
+                    "average_turnover20": item["average_turnover20"],
+                }
+            )
     candidates = []
     if eligible:
         frame = pd.DataFrame(eligible)
-        frame["score"] = rule.momentum_weight * frame.return20.rank(pct=True) + (1 - rule.momentum_weight) * (
-            1 - frame.volatility20.rank(pct=True)
+        industry_counts = frame.groupby("industry")["symbol"].transform("count")
+        frame["peer_scope"] = np.where(
+            (frame["industry"] != "") & (industry_counts >= rule.min_industry_peers), "industry", "universe"
         )
-        candidates = (
-            frame.sort_values(["score", "symbol"], ascending=[False, True])
-            .head(rule.top_n)[["symbol", "score", "return20", "volatility20", "average_turnover20"]]
-            .to_dict("records")
+        frame["pe_industry_pct"] = np.nan
+        frame["pb_industry_pct"] = np.nan
+        industry_mask = frame["peer_scope"] == "industry"
+        if industry_mask.any():
+            grouped = frame.loc[industry_mask]
+            frame.loc[industry_mask, "pe_industry_pct"] = grouped.groupby("industry")["pe_ttm"].rank(pct=True)
+            frame.loc[industry_mask, "pb_industry_pct"] = grouped.groupby("industry")["pb"].rank(pct=True)
+        universe_mask = ~industry_mask
+        if universe_mask.any():
+            frame.loc[universe_mask, "pe_industry_pct"] = frame.loc[universe_mask, "pe_ttm"].rank(pct=True)
+            frame.loc[universe_mask, "pb_industry_pct"] = frame.loc[universe_mask, "pb"].rank(pct=True)
+        frame["pe_history_pct"] = frame["pe_history_pct"].fillna(frame["pe_industry_pct"])
+        frame["pb_history_pct"] = frame["pb_history_pct"].fillna(frame["pb_industry_pct"])
+        frame["score"] = (
+            rule.pe_weight * (1 - frame.pe_industry_pct)
+            + rule.pb_weight * (1 - frame.pb_industry_pct)
+            + rule.pe_history_weight * (1 - frame.pe_history_pct)
+            + rule.pb_history_weight * (1 - frame.pb_history_pct)
         )
+        ranked = frame.sort_values(["score", "symbol"], ascending=[False, True]).head(rule.top_n)
+        for row in ranked.to_dict("records"):
+            hints = []
+            if row["pe_industry_pct"] <= 0.4:
+                hints.append("low_pe_ttm_vs_peers")
+            if row["pb_industry_pct"] <= 0.4:
+                hints.append("low_pb_vs_peers")
+            if row["pe_history_pct"] <= 0.4:
+                hints.append("low_pe_ttm_vs_own_history")
+            if row["pb_history_pct"] <= 0.4:
+                hints.append("low_pb_vs_own_history")
+            candidates.append(
+                {
+                    "symbol": row["symbol"],
+                    "score": float(row["score"]),
+                    "pe_ttm": row["pe_ttm"],
+                    "pb": row["pb"],
+                    "industry": row["industry"],
+                    "peer_scope": row["peer_scope"],
+                    "pe_industry_pct": float(row["pe_industry_pct"]),
+                    "pb_industry_pct": float(row["pb_industry_pct"]),
+                    "pe_history_pct": float(row["pe_history_pct"]),
+                    "pb_history_pct": float(row["pb_history_pct"]),
+                    "average_turnover20": row["average_turnover20"],
+                    "reasons": hints or ["relative_valuation_rank"],
+                    "action": "review_entry",
+                }
+            )
+    fundamentals_present = sum(1 for code in instruments if _current_basic(fundamentals.get(code) or [], day))
     return {
         "as_of": str(day),
         "candidates": candidates,
@@ -155,6 +256,7 @@ def screen(instruments, metrics, day, rule=None):
         "total": len(instruments),
         "rule": rule.model_dump(),
         "analysis_version": ANALYSIS_VERSION,
+        "disclaimer": DISCLAIMER,
         "coverage": (
             sum(
                 m.get("status") == "complete" and m.get("as_of") == str(day)
@@ -165,5 +267,81 @@ def screen(instruments, metrics, day, rule=None):
             if instruments
             else 0
         ),
+        "fundamentals_coverage": fundamentals_present / len(instruments) if instruments else 0,
         "automatic_basket_changes": False,
+    }
+
+
+def holding_advice(
+    holding, quote=None, at=None, last_close=None, stock_report=None, screen_candidates=None, policy=None, name=""
+):
+    policy = policy or HoldingPolicy()
+    screen_candidates = screen_candidates or []
+    quote = quote or {}
+    stock_report = stock_report or {}
+    last = None
+    source = None
+    quote_close = number(quote.get("close"))
+    if (
+        fresh(quote.get("source_time"), at)
+        and quote.get("reference_verified")
+        and quote_close is not None
+        and quote_close > 0
+    ):
+        last, source = quote_close, "fresh_quote"
+    else:
+        close = number(last_close)
+        if close is not None and close > 0:
+            last, source = close, "daily_close"
+    cost = number(holding.get("cost_price"))
+    if last is None or cost is None or cost <= 0:
+        return {
+            "symbol": holding.get("symbol"),
+            "action": "insufficient_data",
+            "reasons": ["missing_or_stale_price"],
+            "last": last,
+            "cost_price": cost,
+            "pnl_pct": None,
+            "pnl_amount": None,
+            "price_source": source,
+            "still_undervalued": False,
+            "risk_flags": stock_report.get("risk_flags") or [],
+            "disclaimer": DISCLAIMER,
+            "analysis_version": ANALYSIS_VERSION,
+            "policy": policy.model_dump(),
+        }
+    pnl_pct = last / cost - 1
+    quantity = number(holding.get("quantity"))
+    pnl_amount = (last - cost) * quantity if quantity is not None else None
+    still = holding.get("symbol") in {row["symbol"] for row in screen_candidates}
+    flags = stock_report.get("risk_flags") or []
+    risky_name = bool(re.search(r"ST|退", (name or holding.get("name") or "").upper()))
+    if pnl_pct <= -policy.exit_loss:
+        action, reasons = "review_exit", ["loss_exceeds_exit_threshold"]
+    elif risky_name:
+        action, reasons = "review_exit", ["name_based_risk_filter"]
+    elif "below_sma60" in flags and "high_volatility" in flags:
+        action, reasons = "review_exit", ["below_sma60", "high_volatility"]
+    elif pnl_pct >= policy.reduce_gain:
+        action, reasons = "review_reduce", ["gain_exceeds_reduce_threshold"]
+    elif policy.reduce_if_not_undervalued and pnl_pct > 0 and not still:
+        action, reasons = "review_reduce", ["profitable_and_no_longer_undervalued"]
+    elif still and pnl_pct <= policy.add_max_pnl and "high_volatility" not in flags:
+        action, reasons = "review_add", ["still_undervalued", "pnl_within_add_band"]
+    else:
+        action, reasons = "hold", ["no_review_threshold_hit"]
+    return {
+        "symbol": holding.get("symbol"),
+        "action": action,
+        "reasons": reasons,
+        "last": last,
+        "cost_price": cost,
+        "pnl_pct": pnl_pct,
+        "pnl_amount": pnl_amount,
+        "price_source": source,
+        "still_undervalued": still,
+        "risk_flags": flags,
+        "disclaimer": DISCLAIMER,
+        "analysis_version": ANALYSIS_VERSION,
+        "policy": policy.model_dump(),
     }

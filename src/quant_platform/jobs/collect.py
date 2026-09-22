@@ -180,6 +180,57 @@ def history(db, feed, job):
                 )
 
 
+def basics(db, feed, job):
+    day = date.fromisoformat(job["payload"]["day"])
+    codes = {
+        r["symbol"]
+        for r in db.rows(
+            "SELECT symbol FROM instruments WHERE list_date<=%s AND (delist_date IS NULL OR delist_date>=%s)",
+            (day, day),
+        )
+    }
+    if not codes:
+        raise Deferred("Waiting for verified security master.", 300)
+    rows = feed.daily_partition("daily_basic", day, codes, job=job)
+    if not rows:
+        raise Deferred("Daily basic data not published; retaining previous revision.", 1800)
+    metadata = {
+        "day": str(day),
+        "total": len(codes),
+        "basic_count": len(rows),
+        "missing_basics": sorted(codes - {r["symbol"] for r in rows}),
+        "price_unit": "unadjusted CNY",
+        "missing_reason": "absent daily_basic row; valuation fields are never inferred",
+    }
+    with db.publication(job) as conn:
+        did = db.dataset(
+            conn,
+            "daily_basic",
+            str(day),
+            rows,
+            metadata,
+            "complete" if len(rows) == len(codes) else "partial",
+        )
+        for row in rows:
+            conn.execute(
+                "INSERT INTO daily_basics VALUES(%s,%s,%s,%s) ON CONFLICT DO NOTHING",
+                (row["symbol"], day, did, jsonb(row)),
+            )
+        db.set_setting(conn, "analysis_dirty", {"basics": did, "at": now().isoformat()})
+        repair = job["payload"].get("repair", 0)
+        if len(rows) != len(codes) and repair < 3:
+            retry = now() + timedelta(minutes=30)
+            db.enqueue(
+                conn,
+                "basics",
+                "history",
+                f"repair-basics:{day}:{int(retry.timestamp()) // 1800}",
+                {"day": str(day), "repair": repair + 1},
+                -10,
+                retry,
+            )
+
+
 def quotes(db, feed, job):
     day = now().astimezone(CN).date()
     from quant_platform.domain import session

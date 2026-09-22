@@ -96,12 +96,14 @@ class Worker:
 
     def execute(self, job):
         kind = job["kind"]
-        if kind in {"directory", "calendar", "daily", "factors", "quotes", "doctor", "benchmark"}:
+        if kind in {"directory", "calendar", "daily", "factors", "quotes", "doctor", "benchmark", "basics"}:
             self.feed = self.feed or Tushare(self.settings, self.db)
         if kind in {"directory", "calendar"}:
             collect.reference(self.db, self.feed, job)
         elif kind in {"daily", "factors"}:
             collect.history(self.db, self.feed, job)
+        elif kind == "basics":
+            collect.basics(self.db, self.feed, job)
         elif kind == "quotes":
             collect.quotes(self.db, self.feed, job)
         elif kind == "benchmark":

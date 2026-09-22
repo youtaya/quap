@@ -3,9 +3,9 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from quant_platform.analysis import basket_summary, indicators, screen
+from quant_platform.analysis import basket_summary, holding_advice, indicators, screen
 from quant_platform.config import Settings
-from quant_platform.domain import BasketInput, CN, board, fresh, session, source_time, symbol
+from quant_platform.domain import BasketInput, CN, ScreenRule, board, fresh, session, source_time, symbol
 
 
 @pytest.mark.parametrize(
@@ -87,11 +87,71 @@ def test_corporate_action_replacement(history_rows):
 def test_screen_deterministic_and_explicit(history_rows):
     metric = indicators(history_rows)
     day = history_rows[-1]["day"]
-    stocks = {"SH600895": {"name": "Normal"}, "SZ000001": {"name": "ST risky"}}
-    report = screen(stocks, {code: metric for code in stocks}, day)
+    stocks = {
+        "SH600895": {"name": "Normal", "status": "L", "data": {"industry": "Steel"}},
+        "SZ000001": {"name": "ST risky", "status": "L", "data": {"industry": "Steel"}},
+    }
+    fundamentals = {
+        "SH600895": [{"day": day, "pe_ttm": 8, "pb": 1.0}],
+        "SZ000001": [{"day": day, "pe_ttm": 6, "pb": 0.8}],
+    }
+    report = screen(stocks, {code: metric for code in stocks}, day, fundamentals=fundamentals)
     assert report["candidates"][0]["symbol"] == "SH600895"
+    assert report["candidates"][0]["action"] == "review_entry"
     assert "name_based_risk_filter" in report["excluded"]["SZ000001"]
     assert not report["automatic_basket_changes"]
+    assert "disclaimer" in report
+
+
+def test_screen_ranks_cheaper_valuation_and_skips_losses(history_rows):
+    metric = indicators(history_rows)
+    day = history_rows[-1]["day"]
+    stocks = {
+        "SH600895": {"name": "Cheap", "status": "L", "data": {"industry": "Steel"}},
+        "SZ000002": {"name": "Expensive", "status": "L", "data": {"industry": "Steel"}},
+        "SZ000001": {"name": "Loss", "status": "L", "data": {"industry": "Steel"}},
+    }
+    metrics = {code: metric for code in stocks}
+    fundamentals = {
+        "SH600895": [{"day": day, "pe_ttm": 8, "pb": 1.0}],
+        "SZ000002": [{"day": day, "pe_ttm": 40, "pb": 6.0}],
+        "SZ000001": [{"day": day, "pe_ttm": None, "pb": 1.0}],
+    }
+    report = screen(stocks, metrics, day, ScreenRule(min_industry_peers=2), fundamentals)
+    assert [row["symbol"] for row in report["candidates"]] == ["SH600895", "SZ000002"]
+    assert report["candidates"][0]["score"] > report["candidates"][1]["score"]
+    assert "non_positive_pe_ttm" in report["excluded"]["SZ000001"]
+    assert "missing_fundamentals" in screen(stocks, metrics, day, fundamentals={"SH600895": []})["excluded"]["SH600895"]
+
+
+def test_legacy_screen_rule_drops_momentum_weight():
+    rule = ScreenRule.model_validate({"momentum_weight": 0.9, "top_n": 5})
+    assert rule.top_n == 5
+    assert rule.pe_weight == 0.4
+
+
+def test_holding_advice_actions():
+    holding = {"symbol": "SH600895", "cost_price": 10, "quantity": 100}
+    assert holding_advice(holding)["action"] == "insufficient_data"
+    assert holding_advice(holding, last_close=8)["action"] == "review_exit"
+    assert holding_advice(holding, last_close=13)["action"] == "review_reduce"
+    added = holding_advice(holding, last_close=10.1, screen_candidates=[{"symbol": "SH600895"}])
+    assert added["action"] == "review_add"
+    assert added["pnl_amount"] == pytest.approx(10)
+    held = holding_advice(holding, last_close=10.5, screen_candidates=[{"symbol": "SH600895"}])
+    assert held["action"] == "hold"
+    stale = {
+        "close": 9,
+        "source_time": datetime(2026, 9, 22, 10, tzinfo=CN).isoformat(),
+        "reference_verified": True,
+    }
+    at = datetime(2026, 9, 22, 12, tzinfo=CN)
+    assert (
+        holding_advice(holding, quote=stale, at=at, last_close=10.5, screen_candidates=[{"symbol": "SH600895"}])[
+            "price_source"
+        ]
+        == "daily_close"
+    )
 
 
 def test_stale_missing_references_do_not_rearm_and_poll_times_not_identity():

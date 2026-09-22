@@ -212,6 +212,7 @@ def doctor(db, settings, feed=None):
         "rt_k": {"ts_code": "600895.SH"},
         "index_daily": {"ts_code": "000300.SH", "trade_date": completed.strftime("%Y%m%d")},
         "suspend_d": {"trade_date": completed.strftime("%Y%m%d")},
+        "daily_basic": {"ts_code": "600895.SH", "trade_date": completed.strftime("%Y%m%d")},
     }
     successful = set()
     try:
@@ -233,6 +234,7 @@ def doctor(db, settings, feed=None):
                 "factors": {"adj_factor"},
                 "quotes": {"rt_k"},
                 "benchmark": {"index_daily"},
+                "basics": {"daily_basic"},
             }
             kinds = [kind for kind, endpoints in dependencies.items() if endpoints <= successful]
             conn.execute(
@@ -247,9 +249,15 @@ def doctor(db, settings, feed=None):
                     "checked_at": now().isoformat(),
                     "successful": sorted(successful),
                     "required_available": required <= successful,
+                    "screen_available": "daily_basic" in successful,
                 },
             )
-        return {"successful": sorted(successful), "missing": sorted(required - successful), "live_soak": "pending"}
+        return {
+            "successful": sorted(successful),
+            "missing": sorted(required - successful),
+            "missing_for_screen": [] if "daily_basic" in successful else ["daily_basic"],
+            "live_soak": "pending",
+        }
     finally:
         if owned:
             feed.close()

@@ -5,7 +5,7 @@ import httpx
 import pytest
 
 from quant_platform.providers import Deferred, PermissionDenied, ProviderError
-from quant_platform.providers.tushare import FIELDS, Tushare, parse_bar, parse_quote
+from quant_platform.providers.tushare import FIELDS, Tushare, parse_bar, parse_basic, parse_quote
 
 
 def row(code="600895.SH"):
@@ -40,6 +40,12 @@ def test_missing_values_not_zeros():
     assert all(quote[key] is None for key in ("volume", "turnover", "source_time", "close"))
     with pytest.raises(ProviderError):
         parse_bar(raw)
+    basic = parse_basic({"ts_code": "600895.SH", "trade_date": "20260921", "pe_ttm": None, "pb": "-", "pe": ""})
+    assert basic["pe_ttm"] is None and basic["pb"] is None and basic["pe"] is None
+    assert "industry" in FIELDS["stock_basic"]
+    assert parse_basic({**basic, "ts_code": "600895.SH", "trade_date": "20260921", "pe_ttm": 12.3, "pb": 1.2})[
+        "pe_ttm"
+    ] == pytest.approx(12.3)
 
 
 def transport(settings, handler):
@@ -101,6 +107,16 @@ def test_request_cap_partitions_using_documented_single_symbol(settings, monkeyp
     monkeypatch.setattr(feed, "request", request)
     data = feed.daily_partition("daily", date(2026, 9, 21), {"SH600895", "SZ000001"})
     assert len(calls) == 3 and len(data) == 2
+    calls.clear()
+
+    def basics(endpoint, params):
+        calls.append((endpoint, params.get("ts_code")))
+        item = {**row(params.get("ts_code", "600895.SH")), "pe_ttm": 10, "pb": 1}
+        return [item] * 6000 if "ts_code" not in params else [item]
+
+    monkeypatch.setattr(feed, "request", basics)
+    valued = feed.daily_partition("daily_basic", date(2026, 9, 21), {"SH600895", "SZ000001"})
+    assert len(valued) == 2 and all(item["pe_ttm"] == 10 for item in valued)
 
 
 def test_credential_absence_blocks_without_network(settings):
