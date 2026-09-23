@@ -26,6 +26,7 @@ WORKSPACES = {
     "Candidates": "🔎 Candidates",
     "Reports": "🗂️ Reports",
     "Research": "🧪 Research",
+    "Notify": "✉️ Notify",
 }
 
 st.markdown(
@@ -110,9 +111,10 @@ with st.sidebar:
         st.rerun()
 
 
-def call(method, path, data=None):
+def call(method, path, data=None, timeout=None):
     try:
-        return client.request(method, path, data)
+        extra = {"timeout": timeout} if timeout is not None else {}
+        return client.request(method, path, data, **extra)
     except (httpx.HTTPError, ValueError) as exc:
         st.error(str(exc) if isinstance(exc, ValueError) else "Backend disconnected. Retained data is not live.")
         return None
@@ -278,10 +280,36 @@ def research_workspace():
         st.json(factor[0]["data"])
 
 
+def notify_workspace():
+    st.caption("Immediate research mail. Letters are not orders and do not promise a return.")
+    email = st.text_input("Notification email", os.getenv("QUANT_NOTIFY_EMAIL", ""))
+    code = st.text_input("Holding symbol", "SH600895")
+    cost = st.number_input("Holding cost (CNY)", min_value=0.01, value=28.0, step=0.01)
+    if st.button("Send candidate and holding mail now"):
+        result = call(
+            "POST",
+            "/briefs",
+            {"email": email, "symbol": code, "cost": cost, "top_n": 3},
+            timeout=90,
+        )
+        if result:
+            st.session_state.brief = result
+    result = st.session_state.get("brief")
+    if not result:
+        st.info("No brief sent from this session yet.")
+        return
+    for item in result.get("messages") or []:
+        st.subheader(item["subject"])
+        ribbon([pill(item.get("delivery", "unknown"), "ok" if item.get("delivered") else "warn")])
+        st.text(item["body"])
+
+
 if page == "Operations":
     operations()
 elif page == "Research":
     research_workspace()
+elif page == "Notify":
+    notify_workspace()
 elif page == "Baskets":
     baskets = call("GET", "/baskets") or []
     ribbon(

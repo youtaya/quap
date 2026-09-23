@@ -24,13 +24,20 @@ class Settings(BaseSettings):
     backup_replica_root: Path | None = None
     observation_root: Path = Path(".runtime/observations")
     notify_webhook: str = ""
+    notify_email: str = ""
+    smtp_host: str = ""
+    smtp_port: int = Field(587, ge=1, le=65535)
+    smtp_user: str = ""
+    smtp_password: SecretStr = SecretStr("")
+    smtp_password_file: Path | None = None
+    smtp_from: str = ""
     qlib_enabled: bool = False
     provider: str = "tushare"
     environment: str = "production"
 
     @model_validator(mode="after")
     def validate_secrets(self):
-        for name in ("database_url", "api_token", "tushare_token"):
+        for name in ("database_url", "api_token", "tushare_token", "smtp_password"):
             path = getattr(self, name + "_file")
             if path:
                 setattr(self, name, SecretStr(path.read_text(encoding="utf-8").strip()))
