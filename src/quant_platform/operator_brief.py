@@ -16,7 +16,7 @@ from pathlib import Path
 import httpx
 
 from quant_platform.analysis import indicators, screen
-from quant_platform.domain import ScreenRule, symbol
+from quant_platform.domain import ScreenRule, now, symbol
 
 SOURCE_NOTE = (
     "本次即时简报使用腾讯前复权日K和新浪财经成交额排名。"
@@ -222,8 +222,26 @@ def send_email(settings, to, subject, body):
         smtp.send_message(message)
 
 
-def run_brief(settings, email, code, cost, top_n=3, market=None):
-    if not EMAIL_PATTERN.fullmatch(email or ""):
+def _price_bucket(value):
+    if value is None:
+        return None
+    return int(round(float(value) * 2))
+
+
+def decision_fingerprint(candidates, holding):
+    return {
+        "candidates": [item["symbol"] for item in candidates],
+        "symbol": holding["symbol"],
+        "stance": holding["stance"],
+        "sell": _price_bucket(holding["sell"]),
+        "add": _price_bucket(holding["add"]),
+    }
+
+
+def run_brief(settings, email, code, cost, top_n=3, market=None, when_changed=False):
+    if email and not EMAIL_PATTERN.fullmatch(email):
+        raise ValueError("Invalid notification email.")
+    if not email and not when_changed:
         raise ValueError("Invalid notification email.")
     code = symbol(code)
     if cost <= 0:
@@ -235,14 +253,39 @@ def run_brief(settings, email, code, cost, top_n=3, market=None):
         loaded["day"],
         ScreenRule(top_n=top_n, minimum_bars=120),
     )
-    messages = [
-        candidate_letter(loaded["day"], screened, loaded["names"]),
-        holding_letter(code, loaded["names"].get(code, code), cost, loaded["metrics"][code]),
+    names = loaded["names"]
+    candidates = [
+        {
+            "symbol": row["symbol"],
+            "name": names.get(row["symbol"], row["symbol"]),
+            "score": round(float(row["score"]), 3),
+        }
+        for row in screened["candidates"][:top_n]
     ]
+    held = holding_letter(code, names.get(code, code), cost, loaded["metrics"][code])
+    holding = {
+        "symbol": code,
+        "name": names.get(code, code),
+        "stance": held["advice"]["stance"],
+        "sell": held["advice"]["sell"],
+        "add": held["advice"]["add"],
+        "close": round(float(loaded["metrics"][code]["close"]), 2),
+    }
+    messages = [candidate_letter(loaded["day"], screened, names), {"subject": held["subject"], "body": held["body"]}]
+    fingerprint = decision_fingerprint(candidates, holding)
+    previous = latest_brief(settings).get("fingerprint")
+    changed = fingerprint != previous
+    send = bool(email) and (changed or not when_changed)
     delivered = []
     for item in messages:
-        record = {"subject": item["subject"], "body": item["body"], "delivered": False, "delivery": "smtp_unconfigured"}
-        if settings.smtp_host.strip():
+        record = {"subject": item["subject"], "body": item["body"], "delivered": False, "delivery": "unchanged"}
+        if not email:
+            record["delivery"] = "no_recipient"
+        elif not send:
+            record["delivery"] = "unchanged"
+        elif not settings.smtp_host.strip():
+            record["delivery"] = "smtp_unconfigured"
+        else:
             try:
                 send_email(settings, email, item["subject"], item["body"])
             except Exception as exc:
@@ -255,6 +298,11 @@ def run_brief(settings, email, code, cost, top_n=3, market=None):
         "email": email,
         "as_of": str(loaded["day"]),
         "source_note": SOURCE_NOTE,
+        "candidates": candidates,
+        "holding": holding,
+        "fingerprint": fingerprint,
+        "changed": changed,
+        "updated_at": now().isoformat(),
         "messages": delivered,
     }
     path = Path(settings.observation_root) / "operator_brief.json"

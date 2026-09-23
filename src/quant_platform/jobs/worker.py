@@ -150,6 +150,10 @@ class Worker:
             from quant_platform.jobs.notify import deliver
 
             deliver(self.db, self.settings, job)
+        elif kind == "brief":
+            from quant_platform.jobs.brief import run
+
+            run(self.db, self.settings, job)
         elif kind == "qlib_export":
             from quant_platform.adapters.qlib.export import export
 

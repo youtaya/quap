@@ -349,13 +349,24 @@ def create_app(settings=None, database=None, read_database=None):
         return latest_brief(settings)
 
     @router.post("/briefs")
-    def send_brief(value: BriefInput):
+    def send_brief(value: BriefInput, store=Depends(db)):
         from quant_platform.operator_brief import run_brief
 
         try:
-            return run_brief(settings, value.email, value.symbol, value.cost, value.top_n)
+            code = symbol(value.symbol)
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from None
+        try:
+            result = run_brief(settings, value.email, code, value.cost, value.top_n)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from None
+        with store.transaction() as conn:
+            store.set_setting(
+                conn,
+                "operator_brief",
+                {"email": value.email, "symbol": code, "cost": value.cost, "top_n": value.top_n, "enabled": True},
+            )
+        return result
 
     @router.post("/control", status_code=202)
     def control(value: Control, store=Depends(db)):

@@ -50,7 +50,8 @@ def main():
         ],
     )
     parser.add_argument(
-        "--role", choices=["scheduler", "quotes", "history", "analysis", "operations", "research", "notify", "qlib"]
+        "--role",
+        choices=["scheduler", "quotes", "history", "analysis", "operations", "research", "notify", "brief", "qlib"],
     )
     parser.add_argument("--runtime", type=Path)
     parser.add_argument("--apply", action="store_true", help="Apply legacy import; otherwise dry-run")

@@ -281,23 +281,31 @@ def research_workspace():
 
 
 def notify_workspace():
-    st.caption("Immediate research mail. Letters are not orders and do not promise a return.")
+    st.caption(
+        "The brief worker refreshes candidates and the holding note every 15 minutes during the cash session, "
+        "and once after the close. Mail goes out when the candidate list, hold conclusion, or sell/add price changes. "
+        "Letters are not orders and do not promise a return."
+    )
     email = st.text_input("Notification email", os.getenv("QUANT_NOTIFY_EMAIL", ""))
     code = st.text_input("Holding symbol", "SH600895")
     cost = st.number_input("Holding cost (CNY)", min_value=0.01, value=28.0, step=0.01)
+    stored = call("GET", "/briefs")
+    result = stored if isinstance(stored, dict) else None
     if st.button("Send candidate and holding mail now"):
-        result = call(
+        posted = call(
             "POST",
             "/briefs",
             {"email": email, "symbol": code, "cost": cost, "top_n": 3},
             timeout=90,
         )
-        if result:
-            st.session_state.brief = result
-    result = st.session_state.get("brief")
-    if not result:
-        st.info("No brief sent from this session yet.")
+        if posted:
+            result = posted
+    if not result or not result.get("messages"):
+        st.info("No brief yet. The next cash-session slot publishes one, or send one now.")
         return
+    if result.get("updated_at"):
+        state = "changed" if result.get("changed") else "unchanged"
+        st.caption(f"Updated {result['updated_at']} · decision {state}")
     for item in result.get("messages") or []:
         st.subheader(item["subject"])
         ribbon([pill(item.get("delivery", "unknown"), "ok" if item.get("delivered") else "warn")])

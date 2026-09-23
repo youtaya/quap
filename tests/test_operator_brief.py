@@ -122,6 +122,82 @@ def test_brief_sends_three_candidates_and_records_smtp(tmp_path, monkeypatch):
     assert "daily_bars" not in Path(run_brief.__code__.co_filename).read_text()
 
 
+def test_repeat_refresh_skips_mail_until_the_decision_changes(tmp_path, monkeypatch):
+    sent = []
+
+    class FakeSMTP:
+        def __init__(self, host, port, timeout=None):
+            return None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def ehlo(self):
+            return None
+
+        def has_extn(self, name):
+            return False
+
+        def send_message(self, message):
+            sent.append(message["Subject"])
+
+    monkeypatch.setattr("quant_platform.operator_brief.smtplib.SMTP", FakeSMTP)
+    settings = Settings(
+        database_url="postgresql://quant@localhost/quant",
+        environment="test",
+        observation_root=tmp_path,
+        smtp_host="smtp.test",
+        smtp_from="desk@example.com",
+    )
+    first = run_brief(settings, "jxiaoping@gmail.com", "SH600895", 28, market=market, when_changed=True)
+    assert first["changed"] is True
+    assert len(sent) == 2
+    second = run_brief(settings, "jxiaoping@gmail.com", "SH600895", 28, market=market, when_changed=True)
+    assert second["changed"] is False
+    assert second["messages"][0]["delivery"] == "unchanged"
+    assert len(sent) == 2
+
+    def shifted(code, universe):
+        loaded = market(code, universe)
+        loaded["instruments"].pop("SH600000")
+        loaded["metrics"].pop("SH600000")
+        return loaded
+
+    third = run_brief(settings, "jxiaoping@gmail.com", "SH600895", 28, market=shifted, when_changed=True)
+    assert third["changed"] is True
+    assert len(sent) == 4
+
+
+def test_brief_slots_follow_the_cash_session():
+    from datetime import datetime
+
+    from quant_platform.domain import CN
+    from quant_platform.jobs.scheduler import brief_slot
+
+    assert brief_slot(datetime(2026, 9, 23, 10, 7, tzinfo=CN)) == "20260923T1000"
+    assert brief_slot(datetime(2026, 9, 23, 12, 0, tzinfo=CN)) is None
+    assert brief_slot(datetime(2026, 9, 23, 15, 10, tzinfo=CN)) == "20260923Tclose"
+    assert brief_slot(datetime(2026, 9, 26, 10, 0, tzinfo=CN)) is None
+
+
+def test_scheduler_enqueues_one_brief_per_slot(db, settings):
+    from datetime import datetime
+
+    from quant_platform.domain import CN
+    from quant_platform.jobs.scheduler import tick
+
+    at = datetime(2026, 9, 23, 10, 7, tzinfo=CN)
+    tick(db, settings, at)
+    tick(db, settings, at)
+    rows = db.rows("SELECT dedupe FROM jobs WHERE kind='brief'")
+    assert [row["dedupe"] for row in rows] == ["brief:20260923T1000"]
+    tick(db, settings, datetime(2026, 9, 26, 10, 0, tzinfo=CN))
+    assert db.rows("SELECT count(*) AS n FROM jobs WHERE kind='brief'")[0]["n"] == 1
+
+
 def test_unconfigured_smtp_keeps_the_letter(tmp_path):
     settings = Settings(
         database_url="postgresql://quant@localhost/quant",
@@ -196,7 +272,7 @@ def test_dashboard_notify_posts_the_holding_cost(monkeypatch):
     app.text_input[0].set_value("jxiaoping@gmail.com").run()
     next(button for button in app.button if button.label == "Send candidate and holding mail now").click().run()
     assert not app.exception
-    payload = next(data for method, path, data, timeout in calls if path == "/briefs")
+    payload = next(data for method, path, data, timeout in calls if method == "POST" and path == "/briefs")
     assert payload["email"] == "jxiaoping@gmail.com"
     assert payload["symbol"] == "SH600895"
     assert payload["cost"] == 28.0
