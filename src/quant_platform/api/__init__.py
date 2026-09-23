@@ -46,6 +46,13 @@ class Approval(StrictModel):
     symbols: list[str] = Field(min_length=1, max_length=200)
 
 
+class BriefInput(StrictModel):
+    email: str = Field(min_length=6, max_length=200)
+    symbol: str = "SH600895"
+    cost: float = Field(28, gt=0, le=100000)
+    top_n: int = Field(3, ge=1, le=5)
+
+
 def create_app(settings=None, database=None, read_database=None):
     settings = settings or Settings()
 
@@ -334,6 +341,32 @@ def create_app(settings=None, database=None, read_database=None):
         if not rows:
             raise HTTPException(404, "Job not found.")
         return rows[0]
+
+    @router.get("/briefs")
+    def briefs():
+        from quant_platform.operator_brief import latest_brief
+
+        return latest_brief(settings)
+
+    @router.post("/briefs")
+    def send_brief(value: BriefInput, store=Depends(db)):
+        from quant_platform.operator_brief import run_brief
+
+        try:
+            code = symbol(value.symbol)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from None
+        try:
+            result = run_brief(settings, value.email, code, value.cost, value.top_n)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from None
+        with store.transaction() as conn:
+            store.set_setting(
+                conn,
+                "operator_brief",
+                {"email": value.email, "symbol": code, "cost": value.cost, "top_n": value.top_n, "enabled": True},
+            )
+        return result
 
     @router.post("/control", status_code=202)
     def control(value: Control, store=Depends(db)):

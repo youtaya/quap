@@ -53,6 +53,14 @@ services:
   api:
     <<: *app
     command: [api, --host, 0.0.0.0, --port, "8000"]
+    environment:
+      <<: *environment
+      QUANT_SMTP_HOST: ${QUANT_SMTP_HOST:-}
+      QUANT_SMTP_PORT: ${QUANT_SMTP_PORT:-587}
+      QUANT_SMTP_USER: ${QUANT_SMTP_USER:-}
+      QUANT_SMTP_PASSWORD: ${QUANT_SMTP_PASSWORD:-}
+      QUANT_SMTP_FROM: ${QUANT_SMTP_FROM:-}
+      QUANT_NOTIFY_EMAIL: ${QUANT_NOTIFY_EMAIL:-}
     ports: ["127.0.0.1:8000:8000"]
     healthcheck:
       test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/live',timeout=5)"]
@@ -111,6 +119,22 @@ services:
       interval: 15s
       timeout: 12s
       retries: 3
+  brief:
+    <<: *app
+    command: [worker, --role, brief]
+    environment:
+      <<: *environment
+      QUANT_SMTP_HOST: ${QUANT_SMTP_HOST:-}
+      QUANT_SMTP_PORT: ${QUANT_SMTP_PORT:-587}
+      QUANT_SMTP_USER: ${QUANT_SMTP_USER:-}
+      QUANT_SMTP_PASSWORD: ${QUANT_SMTP_PASSWORD:-}
+      QUANT_SMTP_FROM: ${QUANT_SMTP_FROM:-}
+      QUANT_NOTIFY_EMAIL: ${QUANT_NOTIFY_EMAIL:-}
+    healthcheck:
+      test: [CMD, quant-platform, health, --role, brief]
+      interval: 15s
+      timeout: 12s
+      retries: 3
   notify:
     <<: *app
     command: [worker, --role, notify]
@@ -127,6 +151,7 @@ services:
     command: [dashboard, --host, 0.0.0.0, --port, "8501"]
     environment:
       QUANT_API_URL: http://api:8000
+      QUANT_NOTIFY_EMAIL: ${QUANT_NOTIFY_EMAIL:-}
     secrets: []
     volumes: []
     ports: ["127.0.0.1:8501:8501"]

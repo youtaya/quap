@@ -6,6 +6,18 @@ from quant_platform.domain import CN, digest, now, session
 from quant_platform.storage import jsonb
 
 
+def brief_slot(local):
+    """15-minute cash-session buckets, plus one snapshot after the close."""
+    if local.weekday() >= 5:
+        return None
+    clock = local.time()
+    if time(9, 30) <= clock <= time(11, 30) or time(13, 0) <= clock <= time(15, 0):
+        return local.strftime("%Y%m%dT%H") + f"{local.minute // 15:02d}"
+    if time(15, 5) <= clock < time(15, 20):
+        return local.strftime("%Y%m%d") + "Tclose"
+    return None
+
+
 def tick(db, settings, at=None):
     at = at or now()
     local = at.astimezone(CN)
@@ -92,6 +104,13 @@ def tick(db, settings, at=None):
                 {"at": at.isoformat()},
                 100,
             )
+        slot = brief_slot(local)
+        if slot:
+            busy = conn.execute(
+                "SELECT 1 FROM jobs WHERE queue='brief' AND status IN ('pending','running') LIMIT 1"
+            ).fetchone()
+            if not busy:
+                db.enqueue(conn, "brief", "brief", f"brief:{slot}", priority=20)
         db.enqueue(conn, "maintenance", "operations", f"maintenance:{int(at.timestamp()) // 3600}", priority=10)
         db.enqueue(conn, "backup", "operations", f"backup:{day}")
         db.enqueue(conn, "notify", "notify", f"notify:{int(at.timestamp()) // 60}")

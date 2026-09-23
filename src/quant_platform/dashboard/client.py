@@ -7,13 +7,13 @@ class Client:
     def __init__(self, url, token):
         self.url, self.token = url.rstrip("/"), token
 
-    def request(self, method, path, value=None):
+    def request(self, method, path, value=None, timeout=20):
         response = httpx.request(
             method,
             self.url + "/api/v1" + path,
             headers={"Authorization": "Bearer " + self.token},
             json=value,
-            timeout=20,
+            timeout=timeout,
             follow_redirects=False,
         )
         if response.status_code >= 300:
