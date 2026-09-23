@@ -82,6 +82,7 @@ def tick(db, settings, at=None):
                 ).fetchone()
                 if not active:
                     db.enqueue(conn, "analyze", "analysis", f"analyze:{signature}", {"day": str(target)}, 10)
+                    db.enqueue(conn, "research", "research", f"research:{signature}", {"day": str(target)}, 10)
         if open_today and (session(at, open_today)[1] or time(15) <= local.time() <= time(15, 5)):
             db.enqueue(
                 conn,
@@ -93,3 +94,4 @@ def tick(db, settings, at=None):
             )
         db.enqueue(conn, "maintenance", "operations", f"maintenance:{int(at.timestamp()) // 3600}", priority=10)
         db.enqueue(conn, "backup", "operations", f"backup:{day}")
+        db.enqueue(conn, "notify", "notify", f"notify:{int(at.timestamp()) // 60}")

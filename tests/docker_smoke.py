@@ -270,7 +270,7 @@ def main():
         backup(db, settings, item)
         state = db.setting("backup")
         restored = restore_check(settings.backup_root / state["file"], restore_dsn, db)
-        assert restored["schema"] == "0002" and db.setting("backup")["restore_verified"]
+        assert restored["schema"] == "0003" and db.setting("backup")["restore_verified"]
         with psycopg.connect(restore_dsn) as restored_db:
             assert restored_db.execute("SELECT value FROM settings WHERE key='smoke-sentinel'").fetchone()[0] == {
                 "persisted": True

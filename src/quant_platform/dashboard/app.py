@@ -25,6 +25,7 @@ WORKSPACES = {
     "Stocks": "📈 Stocks",
     "Candidates": "🔎 Candidates",
     "Reports": "🗂️ Reports",
+    "Research": "🧪 Research",
 }
 
 st.markdown(
@@ -195,7 +196,7 @@ def operations():
         st.dataframe(status["capabilities"], hide_index=True, use_container_width=True)
 
     st.subheader("Operator controls")
-    for col, action in zip(st.columns(5), ("pause", "resume", "refresh", "analyze", "doctor")):
+    for col, action in zip(st.columns(6), ("pause", "resume", "refresh", "analyze", "research", "doctor")):
         if col.button(action.title(), use_container_width=True):
             result = call("POST", "/control", {"action": action})
             if result:
@@ -221,6 +222,14 @@ def operations():
     with st.expander("History, backup and optional Qlib status"):
         st.json({k: status[k] for k in ("directory", "last_analysis", "backup", "qlib", "qualification", "incidents")})
 
+    st.subheader("Data quality")
+    st.caption("Missing bars, stale quotes, factor revisions and blocked capabilities. Separate from container health.")
+    quality = status.get("data_quality") or {}
+    q1, q2, q3 = st.columns(3)
+    q1.metric("Stale quotes", quality.get("stale_or_missing_quote_count", "—"))
+    q2.metric("Missing latest bars", quality.get("listed_missing_latest_completed_bar", "—"))
+    q3.metric("Factor revisions", quality.get("factor_revision_keys", "—"))
+    st.dataframe(quality.get("blocked_capabilities") or [], hide_index=True, use_container_width=True)
     st.subheader("Persistent alerts")
     st.dataframe(call("GET", "/alerts") or [], hide_index=True, use_container_width=True)
 
@@ -245,8 +254,34 @@ def basket_history(basket_id):
         st.info("No observations for this basket yet; pending revisions activate next trading session.")
 
 
+def research_workspace():
+    st.caption("Research path and factor diagnostics. research_value is not NAV. This screen does not submit orders.")
+    factor = call("GET", "/reports?kind=factor&limit=1") or []
+    backtest = call("GET", "/reports?kind=backtest&limit=1") or []
+    if not factor and not backtest:
+        st.info("No research reports yet. Collection and the research worker publish them after a pinned daily run.")
+        return
+    if backtest:
+        data = backtest[0]["data"]
+        st.metric("Research hash", str(data.get("research_hash", ""))[:12] or "—")
+        st.write(data.get("label", "Research path value, not NAV"))
+        st.dataframe(data.get("candidates") or [], hide_index=True, use_container_width=True)
+        st.json(
+            {
+                "execution": data.get("execution"),
+                "limit_check": data.get("limit_check"),
+                "research_value": data.get("research_value"),
+            }
+        )
+    if factor:
+        st.subheader("Factor diagnostics")
+        st.json(factor[0]["data"])
+
+
 if page == "Operations":
     operations()
+elif page == "Research":
+    research_workspace()
 elif page == "Baskets":
     baskets = call("GET", "/baskets") or []
     ribbon(
@@ -355,7 +390,7 @@ elif page == "Candidates":
         with st.expander("Exclusions and provenance"):
             st.json(report["data"])
 else:
-    kind = st.selectbox("Report type", ["basket", "stock", "screen"])
+    kind = st.selectbox("Report type", ["basket", "stock", "screen", "factor", "backtest"])
     reports = call("GET", "/reports?kind=" + kind) or []
     if reports:
         chosen = st.selectbox("Report", reports, format_func=lambda r: f"{r['as_of']} · {r['target']} · #{r['id']}")

@@ -95,6 +95,8 @@ def test_dashboard_degraded_status_and_history_without_quotes(monkeypatch):
     app = signed_app(monkeypatch)
     assert not app.exception
     assert any("degraded" in warning.value for warning in app.warning)
+    app.sidebar.radio[0].set_value("Research").run()
+    assert any("not NAV" in caption.value for caption in app.caption)
     app.sidebar.radio[0].set_value("Stocks").run()
     next(b for b in app.button if b.label == "Load stock history and reports").click().run()
     assert not app.exception

@@ -122,6 +122,12 @@ def screen(instruments, metrics, day, rule=None):
         reasons = []
         if stock.get("status", "L") != "L":
             reasons.append("not_currently_verified_listed")
+        if stock.get("list_date") is not None and str(stock["list_date"]) > str(day):
+            reasons.append("not_yet_listed")
+        if stock.get("delist_date") is not None and str(stock["delist_date"]) <= str(day):
+            reasons.append("delisted")
+        if stock.get("suspended"):
+            reasons.append("suspended")
         if rule.exclude_risk_names and re.search(r"ST|退", stock["name"].upper()):
             reasons.append("name_based_risk_filter")
         if item.get("bars", 0) < rule.minimum_bars:
