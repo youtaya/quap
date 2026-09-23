@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     history_sessions: int = Field(500, ge=120, le=2000)
     artifact_root: Path = Path(".runtime/artifacts")
     backup_root: Path = Path(".runtime/backups")
+    backup_replica_root: Path | None = None
+    observation_root: Path = Path(".runtime/observations")
+    notify_webhook: str = ""
     qlib_enabled: bool = False
     provider: str = "tushare"
     environment: str = "production"

@@ -13,8 +13,9 @@ x-app: &app
     QUANT_API_TOKEN_FILE: /run/secrets/api_token
     QUANT_TUSHARE_TOKEN_FILE: /run/secrets/tushare_token
     QUANT_QLIB_ENABLED: ${QUANT_QLIB_ENABLED:-false}
+    QUANT_OBSERVATION_ROOT: /data/observations
   secrets: [database_url, api_token, tushare_token]
-  volumes: [artifacts:/data/artifacts]
+  volumes: [artifacts:/data/artifacts, observations:/data/observations]
   depends_on:
     migrate: {condition: service_completed_successfully}
   stop_grace_period: 90s
@@ -95,10 +96,30 @@ services:
     command: [worker, --role, operations]
     volumes:
       - artifacts:/data/artifacts
+      - observations:/data/observations
       - ${QUANT_BACKUP_DIRECTORY:?Set QUANT_BACKUP_DIRECTORY to a UID-10001-writable backup destination}:/backups
     healthcheck:
       test: [CMD, quant-platform, health, --role, operations]
       interval: 30s
+      timeout: 12s
+      retries: 3
+  research:
+    <<: *app
+    command: [worker, --role, research]
+    healthcheck:
+      test: [CMD, quant-platform, health, --role, research]
+      interval: 15s
+      timeout: 12s
+      retries: 3
+  notify:
+    <<: *app
+    command: [worker, --role, notify]
+    environment:
+      <<: *environment
+      QUANT_NOTIFY_WEBHOOK: ${QUANT_NOTIFY_WEBHOOK:-}
+    healthcheck:
+      test: [CMD, quant-platform, health, --role, notify]
+      interval: 15s
       timeout: 12s
       retries: 3
   dashboard:
@@ -131,6 +152,7 @@ services:
 volumes:
   postgres:
   artifacts:
+  observations:
 secrets:
   postgres_password: {file: ./secrets/postgres_password}
   database_url: {file: ./secrets/database_url}

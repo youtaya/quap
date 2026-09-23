@@ -4,6 +4,8 @@ import json
 from contextlib import contextmanager
 from datetime import timedelta
 
+import psycopg
+from psycopg import sql as pg_sql
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
@@ -19,8 +21,24 @@ class LostLease(RuntimeError):
     pass
 
 
+def usable_role(dsn, role):
+    """Return the role when this login can assume it. Missing roles keep the login unchanged."""
+    if role not in {"quant_read", "quant_worker"}:
+        return None
+    try:
+        with psycopg.connect(dsn, connect_timeout=5, row_factory=dict_row) as connection:
+            if not connection.execute("SELECT 1 FROM pg_roles WHERE rolname=%s", (role,)).fetchone():
+                return None
+            connection.execute(pg_sql.SQL("SET ROLE {}").format(pg_sql.Identifier(role)))
+            connection.execute("RESET ROLE")
+    except psycopg.errors.InsufficientPrivilege:
+        return None
+    return role
+
+
 class Database:
-    def __init__(self, dsn):
+    def __init__(self, dsn, role=None):
+        self.role = usable_role(dsn, role)
         self.pool = ConnectionPool(
             dsn,
             min_size=1,
@@ -38,6 +56,8 @@ class Database:
     def transaction(self):
         with self.pool.connection() as connection:
             with connection.transaction():
+                if self.role:
+                    connection.execute(pg_sql.SQL("SET LOCAL ROLE {}").format(pg_sql.Identifier(self.role)))
                 yield connection
 
     def close(self):

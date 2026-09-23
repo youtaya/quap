@@ -30,12 +30,14 @@ def alert(conn, key, observation, value, threshold, cooldown, data, at):
             "INSERT INTO alert_keys(event_key) VALUES(%s) ON CONFLICT DO NOTHING RETURNING event_key", (event_key,)
         ).fetchone()
         if inserted:
+            payload = {**data, "value": value, "threshold": threshold, "source": "tushare", "observed_at": at}
             conn.execute(
                 "INSERT INTO alerts(event_key,data) VALUES(%s,%s)",
-                (
-                    event_key,
-                    jsonb({**data, "value": value, "threshold": threshold, "source": "tushare", "observed_at": at}),
-                ),
+                (event_key, jsonb(payload)),
+            )
+            conn.execute(
+                "INSERT INTO alert_outbox(event_key,data) VALUES(%s,%s) ON CONFLICT DO NOTHING",
+                (event_key, jsonb(payload)),
             )
         last = at
     conn.execute(

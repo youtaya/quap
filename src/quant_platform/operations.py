@@ -12,6 +12,7 @@ from psycopg.conninfo import conninfo_to_dict
 
 from quant_platform.domain import CN, now, fresh, session
 from quant_platform.analysis import basket_summary
+from quant_platform.observations import count_lines
 from quant_platform.providers import ProviderError, PermissionDenied
 from quant_platform.providers.tushare import Tushare
 from quant_platform.storage import jsonb
@@ -113,6 +114,69 @@ def qualification(db, settings, job):
         )
 
 
+def data_quality(db, at=None):
+    """Quote, bar and factor gaps. This is not container health."""
+    at = at or now()
+    day = at.astimezone(CN).date()
+    blocked = db.rows(
+        "SELECT endpoint,status FROM capabilities WHERE status IN ('blocked','unverified','circuit_open') "
+        "ORDER BY endpoint"
+    )
+    stale = sum(not fresh(row["data"].get("source_time"), at) for row in db.rows("SELECT data FROM latest_quotes"))
+    missing = db.rows(
+        "WITH last_open AS (SELECT max(day) AS day FROM calendars WHERE exchange='SSE' AND is_open AND day<%s) "
+        "SELECT count(*) AS n FROM instruments i CROSS JOIN last_open d "
+        "WHERE d.day IS NOT NULL AND i.status='L' AND i.list_date<=d.day "
+        "AND (i.delist_date IS NULL OR i.delist_date>d.day) "
+        "AND NOT EXISTS (SELECT 1 FROM daily_bars b WHERE b.symbol=i.symbol AND b.day=d.day)",
+        (day,),
+    )[0]["n"]
+    revisions = db.rows(
+        "SELECT count(*) AS n FROM (SELECT symbol,day FROM factors GROUP BY symbol,day HAVING count(*)>1) revisions"
+    )[0]["n"]
+    return {
+        "blocked_capabilities": blocked,
+        "stale_or_missing_quote_count": stale,
+        "listed_missing_latest_completed_bar": missing,
+        "factor_revision_keys": revisions,
+        "note": "Data quality is independent of container health.",
+    }
+
+
+def recovery_times(backup_at, fault_at, finished_at):
+    return {
+        "fault_at": fault_at.isoformat(),
+        "restore_finished_at": finished_at.isoformat(),
+        "rpo_seconds": (fault_at - backup_at).total_seconds(),
+        "rto_seconds": (finished_at - fault_at).total_seconds(),
+    }
+
+
+def copy_verified_replica(source, replica_root, checksum):
+    replica_root = Path(replica_root).resolve()
+    source = Path(source).resolve()
+    if replica_root == source.parent:
+        raise ValueError("Backup replica must use a different directory than the primary dump.")
+    replica_root.mkdir(parents=True, exist_ok=True)
+    temporary = replica_root / (source.name + ".pending")
+    target = replica_root / source.name
+    shutil.copyfile(source, temporary)
+    with temporary.open("rb") as stream:
+        os.fsync(stream.fileno())
+        replica_checksum = hashlib.file_digest(stream, "sha256").hexdigest()
+    if replica_checksum != checksum:
+        temporary.unlink(missing_ok=True)
+        raise RuntimeError("Backup replica checksum does not match the primary dump.")
+    os.replace(temporary, target)
+    return {
+        "file": target.name,
+        "sha256": replica_checksum,
+        "bytes": target.stat().st_size,
+        "at": now().isoformat(),
+        "directory": str(replica_root),
+    }
+
+
 def status(db, settings):
     at = now()
     heartbeats = db.rows(
@@ -169,6 +233,7 @@ def status(db, settings):
         }
     except OSError:
         metrics["artifact_disk"] = None
+    metrics["persisted_api_events"] = count_lines(settings.observation_root, "api")
     metrics["quota_usage"] = db.rows(
         "SELECT endpoint,window_start,sum(used) AS requests FROM quota "
         "WHERE window_start>now()-interval '1 day' GROUP BY endpoint,window_start ORDER BY window_start DESC LIMIT 100"
@@ -191,6 +256,7 @@ def status(db, settings):
         "qlib": db.setting("qlib", {"enabled": settings.qlib_enabled, "status": "not_published"}),
         "incidents": db.rows("SELECT * FROM incidents ORDER BY updated_at DESC"),
         "qualification": db.setting("qualification", {"status": "pending", "required_trading_sessions": 2}),
+        "data_quality": data_quality(db, at),
         "data_health": "fresh" if total and verified == total and directory_fresh else "degraded_or_unavailable",
         "timestamp": at.isoformat(),
     }
@@ -363,6 +429,9 @@ def backup(db, settings, job):
     os.replace(temporary, target)
     with target.open("rb") as stream:
         checksum = hashlib.file_digest(stream, "sha256").hexdigest()
+    replica = None
+    if settings.backup_replica_root:
+        replica = copy_verified_replica(target, settings.backup_replica_root, checksum)
     with db.publication(job) as conn:
         db.set_setting(
             conn,
@@ -373,6 +442,7 @@ def backup(db, settings, job):
                 "bytes": target.stat().st_size,
                 "sha256": checksum,
                 "restore_verified": False,
+                "replica": replica,
             },
         )
     for old in sorted(root.glob("quant-????????T??????.dump"))[:-7]:
@@ -380,10 +450,11 @@ def backup(db, settings, job):
             old.unlink()
 
 
-def restore_check(archive, target_dsn, source_db=None):
+def restore_check(archive, target_dsn, source_db=None, fault_at=None):
     """Only restore into an explicitly named empty verification database."""
     import psycopg
 
+    started = now()
     env = pg_environment(target_dsn)
     if not env["PGDATABASE"].startswith("quant_restore_"):
         raise ValueError("Restore verification requires a separate quant_restore_* database.")
@@ -406,18 +477,26 @@ def restore_check(archive, target_dsn, source_db=None):
         }
     with Path(archive).open("rb") as stream:
         checksum = hashlib.file_digest(stream, "sha256").hexdigest()
+    finished = now()
+    fault = fault_at or started
+    backup_at = None
     if source_db:
         with source_db.transaction() as conn:
             saved = conn.execute("SELECT value FROM settings WHERE key='backup' FOR UPDATE").fetchone()
             if saved and saved["value"].get("sha256") == checksum:
+                backup_at = datetime.fromisoformat(saved["value"]["at"])
+                timing = recovery_times(backup_at, fault, finished)
+                result = {**result, **timing}
                 source_db.set_setting(
                     conn,
                     "backup",
                     {
                         **saved["value"],
                         "restore_verified": True,
-                        "verified_at": now().isoformat(),
+                        "verified_at": finished.isoformat(),
                         "verification": result,
                     },
                 )
+    elif backup_at is None:
+        result = {**result, **recovery_times(fault, fault, finished)}
     return result

@@ -22,7 +22,7 @@ from quant_platform.storage.baskets import Conflict, save_basket
 
 
 class Control(StrictModel):
-    action: Literal["pause", "resume", "refresh", "analyze", "doctor"]
+    action: Literal["pause", "resume", "refresh", "analyze", "research", "doctor"]
 
 
 class BasketControl(StrictModel):
@@ -46,15 +46,20 @@ class Approval(StrictModel):
     symbols: list[str] = Field(min_length=1, max_length=200)
 
 
-def create_app(settings=None, database=None):
+def create_app(settings=None, database=None, read_database=None):
     settings = settings or Settings()
 
     @asynccontextmanager
     async def lifespan(app):
-        app.state.db = database or Database(settings.dsn)
+        app.state.db = database or Database(settings.dsn, role="quant_worker")
+        app.state.read_db = read_database or (
+            database if database is not None else Database(settings.dsn, role="quant_read")
+        )
         yield
         if database is None:
             app.state.db.close()
+            if app.state.read_db is not app.state.db:
+                app.state.read_db.close()
 
     app = FastAPI(title="Standalone Quant Platform", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     security = HTTPBearer(auto_error=False)
@@ -72,6 +77,16 @@ def create_app(settings=None, database=None):
                 finished = time.monotonic()
                 with timing_lock:
                     timings.append((finished, finished - started, code))
+                try:
+                    from quant_platform.observations import append_jsonl
+
+                    append_jsonl(
+                        settings.observation_root,
+                        "api",
+                        {"path": request.url.path, "status": code, "at": now().isoformat()},
+                    )
+                except OSError:
+                    pass
 
     def api_metrics():
         cutoff = time.monotonic() - 300
@@ -99,6 +114,9 @@ def create_app(settings=None, database=None):
     def db():
         return app.state.db
 
+    def reads():
+        return app.state.read_db
+
     @app.exception_handler(Conflict)
     async def conflict_handler(_, exc):
         return JSONResponse(status_code=409, content={"detail": str(exc)})
@@ -114,21 +132,25 @@ def create_app(settings=None, database=None):
     router = APIRouter(prefix="/api/v1", dependencies=[Depends(auth)])
 
     @router.get("/status")
-    def status(store=Depends(db)):
+    def status(store=Depends(reads)):
         from quant_platform.operations import status as get_status
 
         result = get_status(store, settings)
         result["metrics"]["api"] = api_metrics()
+        result["db_roles"] = {
+            "read": getattr(app.state.read_db, "role", None) or "shared",
+            "write": getattr(app.state.db, "role", None) or "shared",
+        }
         return result
 
     @router.get("/boards")
-    def boards(store=Depends(db)):
+    def boards(store=Depends(reads)):
         from quant_platform.operations import board_status
 
         return board_status(store)
 
     @router.get("/settings")
-    def runtime_options(store=Depends(db)):
+    def runtime_options(store=Depends(reads)):
         rows = store.rows("SELECT value,revision FROM settings WHERE key='runtime_options'")
         return {
             "revision": rows[0]["revision"] if rows else 0,
@@ -169,7 +191,7 @@ def create_app(settings=None, database=None):
         return {"job_id": job_id}
 
     @router.get("/instruments")
-    def instruments(search: str = Query("", max_length=120), store=Depends(db)):
+    def instruments(search: str = Query("", max_length=120), store=Depends(reads)):
         return store.rows(
             "SELECT symbol,name,board,status,list_date FROM instruments "
             "WHERE strpos(lower(symbol || ' ' || name),lower(%s))>0 ORDER BY symbol LIMIT 500",
@@ -177,7 +199,7 @@ def create_app(settings=None, database=None):
         )
 
     @router.get("/quotes")
-    def quotes(code: str | None = None, store=Depends(db)):
+    def quotes(code: str | None = None, store=Depends(reads)):
         if code:
             try:
                 code = symbol(code)
@@ -190,14 +212,14 @@ def create_app(settings=None, database=None):
         return [{**r, "fresh": fresh(r["data"].get("source_time"))} for r in rows]
 
     @router.get("/history/{code}")
-    def history(code: str, as_of: date | None = None, limit: int = Query(500, ge=1, le=2000), store=Depends(db)):
+    def history(code: str, as_of: date | None = None, limit: int = Query(500, ge=1, le=2000), store=Depends(reads)):
         try:
             return store.history(symbol(code), as_of or now().astimezone(CN).date(), limit)
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from None
 
     @router.get("/baskets")
-    def baskets(store=Depends(db)):
+    def baskets(store=Depends(reads)):
         return store.rows(
             "SELECT b.*,r.effective_day,r.data FROM baskets b JOIN basket_revisions r "
             "ON r.basket_id=b.id AND r.revision=b.revision ORDER BY b.created_at"
@@ -214,11 +236,11 @@ def create_app(settings=None, database=None):
             return save_basket(conn, value, basket_id)
 
     @router.get("/baskets/{basket_id}/revisions")
-    def revisions(basket_id: UUID, store=Depends(db)):
+    def revisions(basket_id: UUID, store=Depends(reads)):
         return store.rows("SELECT * FROM basket_revisions WHERE basket_id=%s ORDER BY revision DESC", (basket_id,))
 
     @router.get("/baskets/{basket_id}/observations")
-    def observations(basket_id: UUID, store=Depends(db)):
+    def observations(basket_id: UUID, store=Depends(reads)):
         return store.rows(
             "SELECT * FROM basket_observations WHERE basket_id=%s ORDER BY minute DESC LIMIT 600", (basket_id,)
         )
@@ -245,7 +267,7 @@ def create_app(settings=None, database=None):
         return {"applied": True}
 
     @router.get("/rules")
-    def rules(store=Depends(db)):
+    def rules(store=Depends(reads)):
         rows = store.rows("SELECT * FROM rules ORDER BY revision DESC LIMIT 1")
         return rows[0] if rows else {"revision": 0, "data": ScreenRule().model_dump()}
 
@@ -266,10 +288,10 @@ def create_app(settings=None, database=None):
 
     @router.get("/reports")
     def reports(
-        kind: Literal["stock", "basket", "screen"] = "basket",
+        kind: Literal["stock", "basket", "screen", "factor", "backtest"] = "basket",
         target: str | None = None,
         limit: int = Query(100, ge=1, le=500),
-        store=Depends(db),
+        store=Depends(reads),
     ):
         return store.rows(
             "SELECT * FROM reports WHERE kind=%s AND (%s::text IS NULL OR target=%s) "
@@ -299,15 +321,15 @@ def create_app(settings=None, database=None):
             return result
 
     @router.get("/alerts")
-    def alerts(store=Depends(db)):
+    def alerts(store=Depends(reads)):
         return store.rows("SELECT * FROM alerts ORDER BY recorded_at DESC LIMIT 200")
 
     @router.get("/jobs")
-    def jobs(store=Depends(db)):
+    def jobs(store=Depends(reads)):
         return store.rows("SELECT * FROM jobs ORDER BY id DESC LIMIT 200")
 
     @router.get("/jobs/{job_id}")
-    def job(job_id: int, store=Depends(db)):
+    def job(job_id: int, store=Depends(reads)):
         rows = store.rows("SELECT * FROM jobs WHERE id=%s", (job_id,))
         if not rows:
             raise HTTPException(404, "Job not found.")
@@ -324,14 +346,15 @@ def create_app(settings=None, database=None):
                 # Leave feed ownership, interval enforcement and quota accounting with the scheduler.
                 job_id = store.enqueue(conn, "refresh", "history", f"manual-refresh:{uuid4()}", priority=210)
                 return {"job_id": job_id}
-            kind = "doctor" if value.action == "doctor" else "analyze"
+            kind = {"doctor": "doctor", "research": "research"}.get(value.action, "analyze")
             target = store.setting("analysis_target")
-            if kind == "analyze" and not target:
+            if kind in {"analyze", "research"} and not target:
                 raise Conflict("No completed daily target is available.")
+            queue = {"doctor": "history", "research": "research"}.get(kind, "analysis")
             job_id = store.enqueue(
                 conn,
                 kind,
-                "history" if kind == "doctor" else "analysis",
+                queue,
                 f"manual:{uuid4()}",
                 {"day": target} if target else {},
                 200,

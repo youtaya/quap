@@ -48,11 +48,14 @@ def main():
             "restore-check",
         ],
     )
-    parser.add_argument("--role", choices=["scheduler", "quotes", "history", "analysis", "operations", "qlib"])
+    parser.add_argument(
+        "--role", choices=["scheduler", "quotes", "history", "analysis", "operations", "research", "notify", "qlib"]
+    )
     parser.add_argument("--runtime", type=Path)
     parser.add_argument("--apply", action="store_true", help="Apply legacy import; otherwise dry-run")
     parser.add_argument("--archive", type=Path)
     parser.add_argument("--target-dsn-file", type=Path)
+    parser.add_argument("--fault-at", help="ISO timestamp used to record restore RPO/RTO")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
     args = parser.parse_args()
@@ -98,13 +101,21 @@ def main():
             parser.error("restore-check requires --archive and --target-dsn-file")
         from quant_platform.operations import restore_check
 
+        from datetime import datetime
+
         source_db = Database(settings.dsn)
+        fault = datetime.fromisoformat(args.fault_at) if args.fault_at else None
         try:
-            print(json.dumps(restore_check(args.archive, args.target_dsn_file.read_text().strip(), source_db)))
+            print(
+                json.dumps(
+                    restore_check(args.archive, args.target_dsn_file.read_text().strip(), source_db, fault),
+                    default=str,
+                )
+            )
         finally:
             source_db.close()
         return
-    db = Database(settings.dsn)
+    db = Database(settings.dsn, role="quant_worker" if args.action == "worker" else None)
     try:
         if args.action == "worker":
             if not args.role:
