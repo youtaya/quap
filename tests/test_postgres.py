@@ -10,7 +10,7 @@ from quant_platform.domain import BasketInput, CN, now
 from quant_platform.jobs.analyze import alert
 from quant_platform.providers import Deferred
 from quant_platform.providers.tushare import Budget
-from quant_platform.storage import LostLease, jsonb
+from quant_platform.storage import LostLease
 from quant_platform.storage.baskets import Conflict, save_basket
 
 pytestmark = pytest.mark.postgres
@@ -112,13 +112,16 @@ def test_api_auth_and_versioned_mutations(db, settings):
         assert client.get("/health/live").status_code == 200
         assert client.get("/api/v1/baskets").status_code == 401
         client.headers["Authorization"] = "Bearer " + settings.api_token.get_secret_value()
-        response = client.post("/api/v1/baskets", json={"name": "Basket", "members": {"SH600895": 1}})
+        assert client.post("/api/v1/baskets", json={"name": "Basket", "members": {"SH600895": 1}}).status_code == 410
+        targets = {"name": "Model", "weights": {"SH600895": 0.05}, "cash_weight": 0.95}
+        response = client.post("/api/v1/model-portfolios", json=targets)
         assert response.status_code == 201, response.text
         data = response.json()
-        assert client.get("/api/v1/baskets").json()[0]["revision"] == 1
+        assert client.get("/api/v1/model-portfolios").json()[0]["revision"] == 1
+        assert client.put("/api/v1/model-portfolios/" + data["id"], json=targets).status_code == 409
         assert (
-            client.put("/api/v1/baskets/" + data["id"], json={"name": "New", "members": {"SH600895": 1}}).status_code
-            == 409
+            client.put("/api/v1/model-portfolios/" + data["id"], json={**targets, "expected_revision": 1}).status_code
+            == 200
         )
         assert client.get("/api/v1/status").status_code == 200
         assert client.post("/api/v1/control", json={"action": "pause"}).status_code == 202

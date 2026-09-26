@@ -3,7 +3,6 @@
 import argparse
 import json
 import logging
-import os
 from pathlib import Path
 
 from quant_platform.config import Settings
@@ -46,16 +45,36 @@ def main():
             "health",
             "import-legacy",
             "restore-check",
+            "report",
         ],
     )
     parser.add_argument(
-        "--role", choices=["scheduler", "quotes", "history", "analysis", "operations", "research", "notify", "qlib"]
+        "--role",
+        choices=[
+            "scheduler",
+            "quotes",
+            "history",
+            "analysis",
+            "operations",
+            "notify",
+            "minute-history",
+            "minute-live",
+            "qlib-data",
+            "qlib-train",
+            "qlib-daily",
+            "qlib-intraday",
+            "research-data",
+            "qlib-research",
+            "qlib-diagnostics",
+        ],
     )
     parser.add_argument("--runtime", type=Path)
     parser.add_argument("--apply", action="store_true", help="Apply legacy import; otherwise dry-run")
     parser.add_argument("--archive", type=Path)
     parser.add_argument("--target-dsn-file", type=Path)
+    parser.add_argument("--artifact-destination", type=Path, help="New isolated directory for restored Qlib artifacts")
     parser.add_argument("--fault-at", help="ISO timestamp used to record restore RPO/RTO")
+    parser.add_argument("--as-of", help="Market report session YYYY-MM-DD (default: latest open session)")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
     args = parser.parse_args()
@@ -93,6 +112,22 @@ def main():
                     "true",
                     "--browser.gatherUsageStats",
                     "false",
+                    "--theme.base",
+                    "light",
+                    "--theme.primaryColor",
+                    "#3568d4",
+                    "--theme.backgroundColor",
+                    "#f5f7fb",
+                    "--theme.secondaryBackgroundColor",
+                    "#ffffff",
+                    "--theme.textColor",
+                    "#203452",
+                    "--theme.sidebar.backgroundColor",
+                    "#13213b",
+                    "--theme.sidebar.secondaryBackgroundColor",
+                    "#203555",
+                    "--theme.sidebar.textColor",
+                    "#dce6f7",
                 ]
             )
         )
@@ -108,7 +143,13 @@ def main():
         try:
             print(
                 json.dumps(
-                    restore_check(args.archive, args.target_dsn_file.read_text().strip(), source_db, fault),
+                    restore_check(
+                        args.archive,
+                        args.target_dsn_file.read_text().strip(),
+                        source_db,
+                        fault,
+                        args.artifact_destination,
+                    ),
                     default=str,
                 )
             )
@@ -136,6 +177,18 @@ def main():
             from quant_platform.legacy import migrate_legacy
 
             print(json.dumps(migrate_legacy(db, args.runtime, args.apply), default=str, indent=2))
+        elif args.action == "report":
+            from datetime import date
+
+            from quant_platform.analysis import market_report
+            from quant_platform.domain import CN, now
+
+            today = now().astimezone(CN).date()
+            as_of = date.fromisoformat(args.as_of) if args.as_of else (market_report.latest_session(db, today) or today)
+            report = market_report.build(market_report.load_inputs(db, as_of))
+            with db.transaction() as conn:
+                market_report.store_report(conn, report)
+            print(market_report.render_markdown(report))
         else:
             from quant_platform.operations import doctor, status
 

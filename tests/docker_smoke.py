@@ -3,7 +3,7 @@
 import importlib.metadata
 import json
 import os
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 import subprocess
 import sys
@@ -38,6 +38,9 @@ def fixture_worker(role):
         module.now = lambda: at
 
     class Feed:
+        def __init__(self, config):
+            self.settings = config
+
         def securities(self):
             return {
                 "SH600895": {
@@ -94,7 +97,7 @@ def fixture_worker(role):
             pass
 
     worker = Worker(db, settings, role)
-    worker.feed = Feed()
+    worker.feed = Feed(settings)
     try:
         worker.run()
     finally:
@@ -168,7 +171,7 @@ def main():
                 importlib.metadata.version(name)
             except importlib.metadata.PackageNotFoundError:
                 continue
-            raise AssertionError("Optional package installed in native image: " + name)
+            raise AssertionError("Engine package installed in lightweight API/ingestion image: " + name)
         for role in ("scheduler", "quotes", "history", "analysis"):
             launch("worker", "--role", role)
         launch("api", "--host", "127.0.0.1", "--port", "18081")
@@ -185,11 +188,17 @@ def main():
             assert client.get("/api/v1/status").status_code == 401
             client.headers["Authorization"] = "Bearer " + settings.api_token.get_secret_value()
             assert client.get("/api/v1/status").status_code == 200
+            readiness = client.get("/api/v1/data-readiness").json()
+            assert readiness["required"] and not readiness["native_fallback"]
+            assert not readiness["frequencies"]["day"]["ready"]
+            assert not readiness["frequencies"]["5min"]["ready"]
+            assert client.get("/api/v1/recommendations").json() == []
             if not fixtures:
                 assert client.get("/api/v1/history/SH600895").json() == []
         if fixtures:
-            wait_for(lambda: db.rows("SELECT 1 FROM reports WHERE kind='screen' AND data->>'status'='complete'"), 120)
-            assert len(db.history("SH600895", fixture_at.date())) == 120
+            wait_for(lambda: len(db.history("SH600895", fixture_at.date())) == 120, 120)
+            assert not db.rows("SELECT 1 FROM recommendations")
+            assert not db.rows("SELECT 1 FROM reports WHERE kind='screen'")
             with db.transaction() as conn:
                 basket_id = uuid4()
                 value = BasketInput(name="Fixture Basket", members={"SH600895": 1})
@@ -270,7 +279,8 @@ def main():
         backup(db, settings, item)
         state = db.setting("backup")
         restored = restore_check(settings.backup_root / state["file"], restore_dsn, db)
-        assert restored["schema"] == "0003" and db.setting("backup")["restore_verified"]
+        assert restored["schema"] == "0005" and db.setting("backup")["restore_verified"]
+        assert state["format"] == "quap-snapshot-v1" and restored["artifact_count"] == 0
         with psycopg.connect(restore_dsn) as restored_db:
             assert restored_db.execute("SELECT value FROM settings WHERE key='smoke-sentinel'").fetchone()[0] == {
                 "persisted": True
@@ -279,12 +289,13 @@ def main():
             json.dumps(
                 {
                     "migrations": "passed",
-                    "native_boundary": "passed",
+                    "lightweight_engine_boundary": "passed",
+                    "missing_qlib_fails_closed": "passed",
                     "authenticated_api": "passed",
                     "browser_independent_workers": "passed",
                     "collector_restart": "passed",
                     "backup_restore": "passed",
-                    "fixture_collection_analysis": "passed" if fixtures else "not_requested",
+                    "fixture_collection_monitoring": "passed" if fixtures else "not_requested",
                     "persistent_database_restart": "passed" if restart else "not_requested",
                 }
             )

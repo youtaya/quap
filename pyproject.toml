@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "standalone-quant-platform"
 version = "0.1.0"
-description = "Persistent A-share data collection and basket research platform"
+description = "Qlib-centered A-share research and target-weight proposal platform"
 requires-python = ">=3.11,<3.13"
 dependencies = [
   "fastapi>=0.115,<1", "uvicorn>=0.34,<1", "httpx>=0.28,<1",
@@ -15,7 +15,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-qlib = ["pyqlib==0.9.7", "numpy<2", "mlflow>=2.18,<3", "protobuf>=5.26.1,<6"]
+research-data = ["adata==2.9.5"]
+qlib = ["pyqlib==0.9.7", "lightgbm==4.7.0", "numpy<2", "mlflow>=2.18,<3", "protobuf>=5.26.1,<6"]
 
 [project.scripts]
 quant-platform = "quant_platform.cli:main"

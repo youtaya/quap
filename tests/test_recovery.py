@@ -23,7 +23,7 @@ pytestmark = pytest.mark.postgres
 
 def job(db, kind, queue="test", payload=None):
     with db.transaction() as conn:
-        jid = db.enqueue(conn, kind, queue, f"{kind}:{now().isoformat()}", payload)
+        db.enqueue(conn, kind, queue, f"{kind}:{now().isoformat()}", payload)
     return db.claim(queue, "test-owner")
 
 
@@ -59,7 +59,7 @@ def test_heartbeat_completed_publication_and_shutdown_drain(db, settings):
 def test_heartbeat_reads_one_stable_job_snapshot(settings):
     db = Mock()
     worker = Worker(db, settings, "quotes")
-    item = {"id": 1}
+    item = {"id": 1, "kind": "quotes"}
     worker.job = item
     db.heartbeat.side_effect = lambda *args: setattr(worker, "job", None)
     worker.beat_once()
@@ -140,7 +140,9 @@ def test_api_refresh_settings_control_conflicts_and_retry(db, settings):
         assert client.put("/api/v1/settings", json={"quote_seconds": 45}).status_code == 200
         assert client.get("/api/v1/settings").json()["quote_seconds"] == 45
         assert client.put("/api/v1/settings", json={"quote_seconds": 60}).status_code == 409
-        basket = client.post("/api/v1/baskets", json={"name": "one", "members": {"SH600895": 1}}).json()
+        assert client.post("/api/v1/baskets", json={"name": "one", "members": {"SH600895": 1}}).status_code == 410
+        with db.transaction() as conn:
+            basket = save_basket(conn, BasketInput(name="Legacy monitoring", members={"SH600895": 1}))
         path = f"/api/v1/baskets/{basket['id']}/control"
         assert client.post(path, json={"action": "pause", "expected_revision": 1}).status_code == 200
         assert client.post(path, json={"action": "resume", "expected_revision": 1}).status_code == 409
@@ -270,9 +272,10 @@ def seed_analysis(db, history_rows):
     return target, rows
 
 
-def test_collection_analysis_manual_candidate_approval(db, settings, history_rows):
+def test_collection_never_publishes_native_recommendations(db, settings, history_rows):
     from quant_platform.jobs.analyze import daily
     from quant_platform.jobs.collect import history
+    from quant_platform.domain.workflow import PipelineBlocked
 
     target, rows = seed_analysis(db, history_rows)
     feed = Mock()
@@ -283,57 +286,49 @@ def test_collection_analysis_manual_candidate_approval(db, settings, history_row
     )
     history(db, feed, job(db, "daily", payload={"day": str(target)}))
     assert db.setting("analysis_dirty")
-    daily(db, job(db, "analyze", payload={"day": str(target)}), settings)
-    saved = db.rows("SELECT * FROM reports WHERE kind='screen'")[0]
-    assert saved["data"]["status"] == "complete"
-    assert saved["data"]["candidates"][0]["symbol"] == "SH600895"
-    assert not db.rows("SELECT * FROM baskets"), "Screening cannot automatically change baskets"
-    stock = db.rows("SELECT data FROM reports WHERE kind='stock'")[0]["data"]
-    assert stock["data_versions"][-1][0] == db.setting("analysis_dirty")["daily"]
-    assert stock["snapshot_hash"] == saved["data"]["snapshot_hash"]
+    assert db.history("SH600895", target)[-1]["data"]["close"] == rows[-1]["data"]["close"]
+    with pytest.raises(PipelineBlocked, match="retired"):
+        daily(db, job(db, "analyze", payload={"day": str(target)}), settings)
+    assert not db.rows("SELECT * FROM reports")
+    assert not db.rows("SELECT * FROM recommendations")
+    assert not db.rows("SELECT * FROM model_portfolios")
     with TestClient(create_app(settings, db)) as client:
         client.headers["Authorization"] = "Bearer " + settings.api_token.get_secret_value()
-        path = f"/api/v1/candidates/{saved['id']}/approve"
-        assert client.post(path, json={"name": "Rejected", "symbols": ["bad"]}).status_code == 422
-        assert client.post(path, json={"name": "Rejected", "symbols": ["SZ000001"]}).status_code == 409
-        response = client.post(path, json={"name": "Approved", "symbols": ["SH600895"]})
-        assert response.status_code == 201, response.text
-        assert response.json()["effective_day"] > str(target)
-    assert len(db.rows("SELECT * FROM baskets")) == 1
-    assert db.rows("SELECT * FROM audit WHERE action='candidate_approval'")
+        assert (
+            client.post("/api/v1/candidates/1/approve", json={"name": "Rejected", "symbols": ["SH600895"]}).status_code
+            == 410
+        )
 
 
-def test_analysis_retry_pins_all_inputs(db, settings, history_rows, monkeypatch):
-    from quant_platform.jobs import analyze
+def test_pipeline_retry_pins_all_inputs(db, settings, history_rows):
+    from quant_platform.pipeline import create_run, retry_run
 
     target, rows = seed_analysis(db, history_rows)
     with db.transaction() as conn:
         did = db.dataset(conn, "daily", str(target), [rows[-1]], {})
         conn.execute("INSERT INTO daily_bars VALUES('SH600895',%s,%s,%s)", (target, did, jsonb(rows[-1]["data"])))
-    monkeypatch.setattr(
-        "quant_platform.storage.baskets.now",
-        lambda: datetime.combine(target - timedelta(days=1), datetime.min.time(), CN),
-    )
-    with db.transaction() as conn:
-        basket = save_basket(conn, BasketInput(name="Original", members={"SH600895": 1}))
-    item = job(db, "analyze", payload={"day": str(target)})
-    snapshot = analyze.analysis_snapshot(db, item, target, settings)
-    db.defer(item, "interrupted", delay=0, transient=True)
+        db.set_setting(conn, "analysis_target", str(target))
+    run = create_run(db, settings, {"request_key": "retry-pinned"})
+    item = db.claim("qlib-data", "first")
+    db.defer(item, "interrupted", blocked=True)
     with db.transaction() as conn:
         conn.execute("UPDATE instruments SET name='ST changed',status='U'")
         conn.execute("UPDATE calendars SET is_open=false WHERE day=%s", (target,))
-        conn.execute("UPDATE baskets SET archived=true WHERE id=%s", (basket["id"],))
-        conn.execute("INSERT INTO rules(data) VALUES(%s)", (jsonb({"minimum_turnover": 999999999}),))
+        conn.execute("INSERT INTO scan_policies(data) SELECT data FROM scan_policies LIMIT 1")
         corrected = {**rows[-1]["data"], "close": 100}
         revised = db.dataset(conn, "daily", str(target), [corrected], {})
         conn.execute("INSERT INTO daily_bars VALUES('SH600895',%s,%s,%s)", (target, revised, jsonb(corrected)))
-    retried = db.claim("test", "replacement")
-    analyze.daily(db, retried, settings)
-    stock = db.rows("SELECT data FROM reports WHERE kind='stock'")[0]["data"]
-    assert stock["status"] == "complete" and stock["close"] == rows[-1]["data"]["close"]
-    assert stock["dataset_watermark"] == snapshot["watermark"] < revised
-    assert db.rows("SELECT data FROM reports WHERE kind='basket'")[0]["data"]["name"] == "Original"
-    assert db.rows("SELECT data FROM reports WHERE kind='screen'")[0]["data"]["eligible"] == 1
+    assert retry_run(db, run["id"])["snapshot_reused"]
+    retried = db.claim("qlib-data", "replacement")
+    assert retried["id"] == item["id"] and retried["fence"] > item["fence"]
+    snapshot = db.rows("SELECT snapshot FROM pipeline_runs WHERE id=%s", (run["id"],))[0]["snapshot"]
+    assert snapshot == run["snapshot"]
+    assert snapshot["watermark"] < revised
+    assert (
+        db.history("SH600895", target, watermark=snapshot["watermark"])[-1]["data"]["close"]
+        == rows[-1]["data"]["close"]
+    )
+    assert not db.rows("SELECT * FROM recommendations")
 
 
 @pytest.mark.parametrize(
@@ -437,3 +432,58 @@ def test_operational_metrics_cover_source_analysis_and_api_errors(db, settings, 
     assert metrics["analysis_session_lag"] == 2
     assert metrics["pending_quota_deferrals"] == 1
     assert metrics["artifact_disk"]["free_bytes"] > 0
+
+
+@pytest.mark.parametrize("failure", ["deadline", "stop", "output"])
+def test_qlib_worker_terminates_its_subprocess(settings, monkeypatch, failure):
+    import subprocess
+    import sys
+    from quant_platform.domain.workflow import PipelineBlocked
+    from quant_platform.storage import LostLease
+
+    worker = Worker(Mock(), settings, "qlib-daily")
+    processes = []
+    original = subprocess.Popen
+
+    def spawn(args, **kwargs):
+        process = original(
+            [sys.executable, "-c", "import sys,time; sys.stdin.read(); print('x'*2048,flush=True); time.sleep(30)"],
+            **kwargs,
+        )
+        processes.append(process)
+        return process
+
+    monkeypatch.setattr("quant_platform.jobs.worker.subprocess.Popen", spawn)
+    if failure == "deadline":
+        monkeypatch.setattr(worker, "deadline", lambda job: 0)
+    elif failure == "stop":
+        worker.stop.set()
+    else:
+        monkeypatch.setattr("quant_platform.jobs.worker.MAX_QLIB_LOG_BYTES", 1024)
+    with pytest.raises(LostLease if failure == "stop" else PipelineBlocked):
+        worker.qlib_step({"id": 1, "kind": "qlib_infer"})
+    assert processes[0].poll() is not None
+
+
+def test_qlib_worker_preserves_safe_blocker_and_hides_unknown_output(settings, monkeypatch):
+    import subprocess
+    import sys
+    from quant_platform.domain.workflow import PipelineBlocked
+
+    original = subprocess.Popen
+    worker = Worker(Mock(), settings, "qlib-daily")
+    for exit_code, output, expected in (
+        (3, "QUAP_BLOCKED=Missing finalized bars.", "Missing finalized bars"),
+        (1, "private connection details", "Qlib engine step failed"),
+    ):
+
+        def spawn(args, **kwargs):
+            return original(
+                [sys.executable, "-c", f"import sys; sys.stdin.read(); print({output!r}); sys.exit({exit_code})"],
+                **kwargs,
+            )
+
+        monkeypatch.setattr("quant_platform.jobs.worker.subprocess.Popen", spawn)
+        with pytest.raises(PipelineBlocked, match=expected) as error:
+            worker.qlib_step({"id": 1, "kind": "qlib_infer"})
+        assert "private" not in str(error.value)

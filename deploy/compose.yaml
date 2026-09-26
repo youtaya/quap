@@ -1,5 +1,6 @@
 name: quant-platform
 x-app: &app
+  image: ${QUANT_APP_IMAGE:-quant-platform-native:local}
   build:
     context: ..
     dockerfile: deploy/Dockerfile
@@ -12,8 +13,10 @@ x-app: &app
     QUANT_DATABASE_URL_FILE: /run/secrets/database_url
     QUANT_API_TOKEN_FILE: /run/secrets/api_token
     QUANT_TUSHARE_TOKEN_FILE: /run/secrets/tushare_token
-    QUANT_QLIB_ENABLED: ${QUANT_QLIB_ENABLED:-false}
+    QUANT_TRAINING_DEADLINE_SECONDS: ${QUANT_TRAINING_DEADLINE_SECONDS:-21600}
+    QUANT_DATA_DEADLINE_SECONDS: ${QUANT_DATA_DEADLINE_SECONDS:-7200}
     QUANT_OBSERVATION_ROOT: /data/observations
+    QUANT_RESEARCH_DATA_ENABLED: ${QUANT_RESEARCH_DATA_ENABLED:-false}
   secrets: [database_url, api_token, tushare_token]
   volumes: [artifacts:/data/artifacts, observations:/data/observations]
   depends_on:
@@ -24,6 +27,17 @@ x-app: &app
   logging:
     driver: local
     options: {max-size: 10m, max-file: "5"}
+
+x-engine: &engine
+  <<: *app
+  image: ${QUANT_QLIB_IMAGE:-quant-platform-qlib:local}
+  platform: linux/amd64
+  build:
+    context: ..
+    dockerfile: deploy/Dockerfile
+    target: qlib
+  mem_limit: 4g
+  cpus: 4
 
 services:
   postgres:
@@ -103,11 +117,19 @@ services:
       interval: 30s
       timeout: 12s
       retries: 3
-  research:
+  minute-history:
     <<: *app
-    command: [worker, --role, research]
+    command: [worker, --role, minute-history]
     healthcheck:
-      test: [CMD, quant-platform, health, --role, research]
+      test: [CMD, quant-platform, health, --role, minute-history]
+      interval: 15s
+      timeout: 12s
+      retries: 3
+  minute-live:
+    <<: *app
+    command: [worker, --role, minute-live]
+    healthcheck:
+      test: [CMD, quant-platform, health, --role, minute-live]
       interval: 15s
       timeout: 12s
       retries: 3
@@ -135,19 +157,93 @@ services:
       interval: 15s
       timeout: 8s
       retries: 3
-  qlib:
+  qlib-data:
+    <<: *engine
+    command: [worker, --role, qlib-data]
+    healthcheck:
+      test: [CMD, quant-platform, health, --role, qlib-data]
+      interval: 15s
+      timeout: 12s
+      retries: 3
+  qlib-train:
+    <<: *engine
+    command: [worker, --role, qlib-train]
+    mem_limit: 8g
+    healthcheck:
+      test: [CMD, quant-platform, health, --role, qlib-train]
+      interval: 15s
+      timeout: 12s
+      retries: 3
+  qlib-daily:
+    <<: *engine
+    command: [worker, --role, qlib-daily]
+    healthcheck:
+      test: [CMD, quant-platform, health, --role, qlib-daily]
+      interval: 15s
+      timeout: 12s
+      retries: 3
+  qlib-intraday:
+    <<: *engine
+    command: [worker, --role, qlib-intraday]
+    healthcheck:
+      test: [CMD, quant-platform, health, --role, qlib-intraday]
+      interval: 15s
+      timeout: 12s
+      retries: 3
+
+  research-data:
     <<: *app
-    profiles: [qlib]
+    profiles: [research]
+    image: ${QUANT_RESEARCH_DATA_IMAGE:-quant-platform-research-data:local}
     platform: linux/amd64
     build:
       context: ..
       dockerfile: deploy/Dockerfile
-      target: qlib
-    command: [worker, --role, qlib]
+      target: research-data
+    command: [worker, --role, research-data]
     environment:
-      <<: *environment
-      QUANT_QLIB_ENABLED: "true"
+      QUANT_DATABASE_URL_FILE: /run/secrets/database_url
+      QUANT_RESEARCH_DATA_ENABLED: ${QUANT_RESEARCH_DATA_ENABLED:-false}
+    secrets: [database_url]
+    mem_limit: 2g
+    cpus: 1
+    pids_limit: 128
+    healthcheck:
+      test: [CMD, quant-platform, health, --role, research-data]
+      interval: 30s
+      timeout: 12s
+      retries: 3
+  qlib-research:
+    <<: *engine
+    profiles: [research]
+    command: [worker, --role, qlib-research]
+    environment:
+      QUANT_DATABASE_URL_FILE: /run/secrets/database_url
+      QUANT_TRAINING_DEADLINE_SECONDS: ${QUANT_TRAINING_DEADLINE_SECONDS:-21600}
+    secrets: [database_url]
+    mem_limit: 8g
+    cpus: 2
+    pids_limit: 256
+    healthcheck:
+      test: [CMD, quant-platform, health, --role, qlib-research]
+      interval: 30s
+      timeout: 12s
+      retries: 3
+  qlib-diagnostics:
+    <<: *engine
+    profiles: [research]
+    command: [worker, --role, qlib-diagnostics]
+    environment:
+      QUANT_DATABASE_URL_FILE: /run/secrets/database_url
+    secrets: [database_url]
     mem_limit: 4g
+    cpus: 2
+    pids_limit: 256
+    healthcheck:
+      test: [CMD, quant-platform, health, --role, qlib-diagnostics]
+      interval: 30s
+      timeout: 12s
+      retries: 3
 
 volumes:
   postgres:

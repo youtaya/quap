@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 1050" role="img" aria-labelledby="title desc">
-  <title id="title">Standalone A-share Quant Platform — Architecture</title>
-  <desc id="desc">An operator uses Streamlit and an authenticated FastAPI API. Independent scheduler, history, quote, analysis and operations workers use PostgreSQL for canonical data and a durable job queue. Tushare is the only production feed. Qlib is an optional isolated adapter. Local backups require separate off-host replication.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 1430" role="img" aria-labelledby="title desc">
+  <title id="title">QUAP — Required Qlib Research and Recommendation Pipeline</title>
+  <desc id="desc">Authorized Tushare daily and minute data become validated immutable Qlib generations. Separate Qlib workers train, evaluate, and infer with a shared target-weight strategy. PostgreSQL stores run dependencies, release approvals, provenance, and human model-portfolio decisions. Missing Qlib prerequisites block recommendations. Backups include database and referenced artifacts. An opt-in research profile adds isolated adata snapshots, safe factor experiments with explicit freeze, and asynchronous mature-label diagnostics. Supplemental data never enters canonical training or release gates. Production qualification remains separate from fixture tests.</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#49617c"/></marker>
     <style>
@@ -12,26 +12,26 @@
       .small { font-size: 13px; fill: #536c84; }
       .box { fill: #fff; stroke: #cad8e5; stroke-width: 1.5; rx: 12; }
       .worker { fill: #eef8f7; stroke: #79b6ae; stroke-width: 1.5; rx: 12; }
-      .optional { fill: #f6f5fa; stroke: #aaa4bd; stroke-width: 1.5; stroke-dasharray: 6 4; rx: 12; }
+      .engine { fill: #e8efff; stroke: #7b94c7; stroke-width: 1.5; rx: 12; }
       .edge { fill: none; stroke: #49617c; stroke-width: 2; marker-end: url(#arrow); }
       .bus { fill: none; stroke: #49617c; stroke-width: 2; }
     </style>
   </defs>
-  <rect width="1440" height="1050" fill="#f7fafc"/>
-  <text x="40" y="52" class="heading">Standalone A-share Quant Platform</text>
-  <text x="40" y="82" class="sub">Browser-independent collection and analysis · PostgreSQL system of record · Qlib is optional</text>
+  <rect width="1440" height="1430" fill="#f7fafc"/>
+  <text x="40" y="52" class="heading">QUAP · Qlib-Centered Research Pipeline</text>
+  <text x="40" y="82" class="sub">Required Qlib models and strategy · Exact weights + cash · Fail-closed publication · No orders</text>
 
   <rect x="40" y="120" width="260" height="105" class="box"/>
   <text x="60" y="153" class="label">Operator / browser</text>
-  <text x="60" y="180" class="body">Manual baskets and approvals</text>
+  <text x="60" y="180" class="body">Model portfolios and approvals</text>
   <text x="60" y="205" class="small">Local access or SSH tunnel</text>
   <rect x="390" y="120" width="280" height="105" class="box"/>
   <text x="410" y="153" class="label">Streamlit dashboard</text>
   <text x="410" y="180" class="body">API-only client · token login</text>
-  <text x="410" y="205" class="small">Host loopback :8501</text>
+  <text x="410" y="205" class="small">Six workspaces · loopback :8501</text>
   <rect x="750" y="120" width="300" height="105" class="box"/>
   <text x="770" y="153" class="label">FastAPI /api/v1</text>
-  <text x="770" y="180" class="body">Bearer auth · controls · reports</text>
+  <text x="770" y="180" class="body">Intent · run graph · provenance</text>
   <text x="770" y="205" class="small">Host loopback :8000</text>
   <rect x="1130" y="120" width="270" height="105" class="box"/>
   <text x="1150" y="153" class="label">Private secret files</text>
@@ -48,41 +48,41 @@
   <text x="60" y="394" class="label">Tushare Pro</text>
   <text x="60" y="423" class="body">stock_basic · trade_cal</text>
   <text x="60" y="450" class="body">daily · adj_factor · rt_k</text>
-  <text x="60" y="477" class="small">Shared quotas / permission gates</text>
-  <text x="60" y="501" class="small">Dated source timestamps required</text>
+  <text x="60" y="477" class="small">Benchmark · dated risk / limits</text>
+  <text x="60" y="501" class="small">stk_mins · rt_min · rt_min_daily</text>
   <text x="60" y="523" class="small">No public or synthetic fallback</text>
 
   <rect x="400" y="365" width="280" height="120" class="worker"/>
-  <text x="420" y="398" class="label">History / reference worker</text>
-  <text x="420" y="426" class="body">Master · calendars · raw bars</text>
-  <text x="420" y="451" class="body">Factors · bootstrap · repairs</text>
-  <text x="420" y="473" class="small">Durable per-partition checkpoints</text>
-  <rect x="730" y="365" width="280" height="120" class="worker"/>
-  <text x="750" y="398" class="label">Quote worker</text>
-  <text x="750" y="426" class="body">Verified trading sessions only</text>
-  <text x="750" y="451" class="body">Prioritize tracked stocks</text>
-  <text x="750" y="473" class="small">30-second interval + collection time</text>
-  <rect x="1060" y="365" width="280" height="120" class="worker"/>
-  <text x="1080" y="398" class="label">Native analysis worker</text>
-  <text x="1080" y="426" class="body">Indicators · screening · reports</text>
-  <text x="1080" y="451" class="body">Basket observations / alerts</text>
-  <text x="1080" y="473" class="small">Pinned inputs · explicit missing data</text>
-  <path d="M320 425H400" class="edge"/>
+  <text x="420" y="398" class="label">Daily / minute collection</text>
+  <text x="420" y="426" class="body">Raw bars · factors · references</text>
+  <text x="420" y="451" class="body">Dated pools · scoped checkpoints</text>
+  <text x="420" y="473" class="small">Quotes are display inputs, not candles</text>
+  <rect x="730" y="365" width="280" height="120" class="engine"/>
+  <text x="750" y="398" class="label">Qlib data preparation</text>
+  <text x="750" y="426" class="body">Daily / five-minute generations</text>
+  <text x="750" y="451" class="body">Frozen anchors · coverage gates</text>
+  <text x="750" y="473" class="small">Immutable manifests · point-in-time data</text>
+  <rect x="1060" y="365" width="280" height="120" class="engine"/>
+  <text x="1080" y="398" class="label">Qlib training / evaluation</text>
+  <text x="1080" y="426" class="body">Separate daily and minute models</text>
+  <text x="1080" y="451" class="body">Purged labels · fitted processors</text>
+  <text x="1080" y="473" class="small">Signal records · shared-strategy backtests</text>
+  <path d="M320 425H400M680 425H730M1010 425H1060" class="edge"/>
   <text x="324" y="410" class="small">HTTPS</text>
-  <path d="M320 385H345V344H870V365" class="edge"/>
 
   <rect x="400" y="535" width="280" height="110" class="worker"/>
   <text x="420" y="568" class="label">Scheduler</text>
   <text x="420" y="596" class="body">Leader lock · idempotent jobs</text>
   <text x="420" y="621" class="small">Session gates / catch-up scheduling</text>
-  <rect x="730" y="535" width="280" height="110" class="worker"/>
-  <text x="750" y="568" class="label">Operations worker</text>
-  <text x="750" y="596" class="body">Backups · retention · incidents</text>
-  <text x="750" y="621" class="small">Live qualification observations</text>
-  <rect x="1060" y="535" width="280" height="110" class="optional"/>
-  <text x="1080" y="568" class="label">Optional Qlib worker</text>
-  <text x="1080" y="596" class="body">Export / isolated reader</text>
-  <text x="1080" y="621" class="small">Separate image · Linux AMD64</text>
+  <rect x="730" y="535" width="280" height="110" class="engine"/>
+  <text x="750" y="568" class="label">Qlib inference + strategy</text>
+  <text x="750" y="596" class="body">Daily / intraday isolated queues</text>
+  <text x="750" y="621" class="small">Weights + cash · valid reports · outbox</text>
+  <rect x="1060" y="535" width="280" height="110" class="engine"/>
+  <text x="1080" y="568" class="label">Qualified model releases</text>
+  <text x="1080" y="596" class="body">Evaluation · shadow · promotion</text>
+  <text x="1080" y="621" class="small">Freshness + lineage + manual approval</text>
+  <path d="M1200 485V535M1060 590H1010M870 485V535" class="edge"/>
 
   <path d="M680 465H704V680M1010 465H1034V680M1340 465H1364V680H540" class="bus"/>
   <path d="M540 645V680M870 645V680M1200 645V680" class="bus"/>
@@ -91,15 +91,15 @@
   <text x="600" y="709" class="small">DB claims / fenced publication / reads · no browser-owned workers</text>
 
   <rect x="480" y="735" width="780" height="110" rx="14" fill="#173f65"/>
-  <text x="505" y="771" style="fill:white;font-size:22px;font-weight:700">PostgreSQL 16 · canonical storage + durable job queue</text>
-  <text x="505" y="802" style="fill:#e0ecf6;font-size:15px">Bars / factors / quotes · basket revisions · reports / alerts · jobs / leases / audit</text>
+  <text x="505" y="771" style="fill:white;font-size:22px;font-weight:700">PostgreSQL 16 · durable jobs · schema 0008</text>
+  <text x="505" y="802" style="fill:#e0ecf6;font-size:15px">Canonical data · run dependencies · model releases · recommendations · portfolio revisions</text>
   <text x="505" y="828" style="fill:#e0ecf6;font-size:14px">At-least-once delivery · idempotent effects · renewable leases · fencing tokens</text>
   <path d="M900 225V245H1383V790H1260" class="edge"/>
   <text x="1285" y="261" class="small">API DB access</text>
 
   <rect x="40" y="730" width="280" height="145" class="box"/>
   <text x="60" y="764" class="label">Persistent backup storage</text>
-  <text x="60" y="792" class="body">pg_dump · checksum · 7 copies</text>
+  <text x="60" y="792" class="body">Database + artifacts · checksums</text>
   <text x="60" y="818" class="small">Local Docker volume, or Linux disk</text>
   <text x="60" y="844" class="small">Off-host replication: operator-owned</text>
   <path d="M480 787H320" class="edge"/>
@@ -107,10 +107,45 @@
 
   <rect x="40" y="920" width="850" height="90" rx="12" fill="#fff7e8" stroke="#e0c48e"/>
   <text x="60" y="950" class="label">Safety boundary</text>
-  <text x="60" y="976" class="body">Manual approval only · no order execution · one active live owner per watchlist</text>
-  <text x="60" y="999" class="small">Process health is not data freshness. Local Docker is not a highly available production cluster.</text>
-  <rect x="940" y="920" width="460" height="90" class="optional"/>
-  <text x="960" y="950" class="label">Qlib artifacts / external research datasets</text>
-  <text x="960" y="976" class="body">Owned immutable generations; external inputs read-only</text>
-  <path d="M1320 645H1414V965H1400" class="edge" stroke-dasharray="5 4"/>
+  <text x="60" y="976" class="body">No balances or executable quantities · acceptance changes model targets only · no native fallback</text>
+  <text x="60" y="999" class="small">Implementation / fixtures are not production qualification. Verify real permissions, shadow sessions and capacity.</text>
+  <rect x="940" y="920" width="460" height="90" class="engine"/>
+  <text x="960" y="950" class="label">Qlib generations / models / recorders</text>
+  <text x="960" y="975" class="small">Checksummed · reference-aware retention</text>
+    <text x="960" y="996" class="small">Consistent restore includes research artifacts</text>
+  <path d="M1320 645H1414V965H1400" class="edge"/>
+
+  <rect x="20" y="1040" width="1400" height="360" rx="18" fill="#f2eef9" stroke="#b8a9cf"/>
+  <text x="40" y="1074" class="label">Opt-in research profile · separate queues · same durable PostgreSQL / artifact lifecycle</text>
+  <text x="40" y="1099" class="small">Implemented extensions; host and adapter fixtures verified. Database / installed-image / browser acceptance remains incomplete.</text>
+
+  <rect x="40" y="1120" width="420" height="205" class="box"/>
+  <text x="60" y="1151" class="label">research-data · adata / Eastmoney</text>
+  <text x="60" y="1178" class="body">Explicit terms + enablement + named stocks</text>
+  <text x="60" y="1204" class="body">HTTPS-only · raw prices · bounded transport</text>
+  <text x="60" y="1230" class="body">Isolated snapshots / quality / quarantine</text>
+  <text x="60" y="1257" class="small">Daily HTTP adapter unavailable; intraday same-day only</text>
+  <text x="60" y="1281" class="small">No canonical writes, pool qualification, or training inputs</text>
+  <text x="60" y="1306" class="small">Off by default · 1 CPU / 2 GiB · 50 stocks/job</text>
+
+  <rect x="510" y="1120" width="420" height="205" class="engine"/>
+  <text x="530" y="1151" class="label">qlib-research · reproducible trials</text>
+  <text x="530" y="1178" class="body">Canonical generation + safe daily factor set</text>
+  <text x="530" y="1204" class="body">Three purged folds · reserved final test</text>
+  <text x="530" y="1230" class="body">Validation evidence → explicit candidate freeze</text>
+  <text x="530" y="1257" class="small">Create challenger → existing training / release gates</text>
+  <text x="530" y="1281" class="small">Immutable code / features / labels / trial attempts</text>
+  <text x="530" y="1306" class="small">No automatic promotion · 2 CPUs / 8 GiB</text>
+
+  <rect x="980" y="1120" width="420" height="205" class="worker"/>
+  <text x="1000" y="1151" class="label">qlib-diagnostics · async feedback</text>
+  <text x="1000" y="1178" class="body">Publication writes job intent only</text>
+  <text x="1000" y="1204" class="body">Training-reference PSI / gain importance</text>
+  <text x="1000" y="1230" class="body">Exact mature-label IC / session rollups</text>
+  <text x="1000" y="1257" class="small">Original scored universe · source revisions · ≥30 pairs</text>
+  <text x="1000" y="1281" class="small">Missing evidence stays unavailable; no target changes</text>
+  <text x="1000" y="1306" class="small">Outside live inference deadline · 2 CPUs / 4 GiB</text>
+
+  <text x="40" y="1355" class="body">API-only panels: Data &amp; Pipeline · Models &amp; Validation · Stock Research · no experimental Accept action</text>
+  <text x="40" y="1382" class="small">Deferred stage: RD-Agent / multi-agent reports need separate sandbox, endpoint, data-egress, and spending approval. No paid LLM calls here.</text>
 </svg>

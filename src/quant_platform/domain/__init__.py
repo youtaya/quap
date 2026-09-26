@@ -8,7 +8,7 @@ from datetime import date, datetime, time, timezone
 from typing import Protocol
 from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 CN = ZoneInfo("Asia/Shanghai")
 

@@ -2,7 +2,7 @@
 
 from datetime import date, timedelta
 
-from quant_platform.domain import CN, digest, now, number
+from quant_platform.domain import CN, digest, now
 from quant_platform.providers import Deferred, ProviderError
 from quant_platform.providers.tushare import parse_date
 from quant_platform.storage import jsonb
@@ -44,7 +44,7 @@ def reference(db, feed, job):
                 "trade_cal",
                 {
                     "exchange": exchange,
-                    "start_date": (today - timedelta(days=1200)).strftime("%Y%m%d"),
+                    "start_date": (today - timedelta(days=feed.settings.history_sessions * 2 + 366)).strftime("%Y%m%d"),
                     "end_date": (today + timedelta(days=90)).strftime("%Y%m%d"),
                 },
             )
@@ -74,7 +74,7 @@ def benchmark(db, feed, job):
         "index_daily",
         {
             "ts_code": "000300.SH",
-            "start_date": (target - timedelta(days=1200)).strftime("%Y%m%d"),
+            "start_date": (target - timedelta(days=feed.settings.history_sessions * 2 + 366)).strftime("%Y%m%d"),
             "end_date": target.strftime("%Y%m%d"),
         },
     )

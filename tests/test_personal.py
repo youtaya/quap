@@ -44,32 +44,31 @@ def test_alert_outbox_survives_failed_delivery(db, settings):
     def fail(payload):
         raise RuntimeError("channel down")
 
-    deliver(db, settings, item, send=fail)
+    assert deliver(db, settings, item, send=fail) == {"sent": 0, "skipped": 0, "undelivered": 1}
     row = db.rows("SELECT * FROM alert_outbox")[0]
     assert row["delivered_at"] is None and row["attempts"] == 1 and row["last_error"] == "RuntimeError"
     assert db.rows("SELECT * FROM alerts")
     item = job(db, "notify", queue="notify")
     delivered = []
-    deliver(db, settings, item, send=lambda payload: delivered.append(payload["event_key"]))
+    assert deliver(db, settings, item, send=lambda payload: delivered.append(payload["event_key"])) == {
+        "sent": 1,
+        "skipped": 0,
+        "undelivered": 0,
+    }
     assert delivered
     assert db.rows("SELECT delivered_at FROM alert_outbox")[0]["delivered_at"] is not None
 
 
-def test_research_worker_withholds_orders_and_reuses_hash(db, settings, history_rows):
+def test_native_research_worker_is_retired_without_fallback(db, settings, history_rows):
     from quant_platform.jobs.research import run
+    from quant_platform.domain.workflow import PipelineBlocked
 
     target, _rows = seed_analysis(db, history_rows)
     item = job(db, "research", queue="research", payload={"day": str(target)})
-    run(db, item, settings)
-    saved = db.rows("SELECT data FROM reports WHERE kind='backtest'")[0]["data"]
-    assert saved["execution"] == "withheld_limit_unknown"
-    assert saved["research_value"] is None
-    assert saved["automatic_orders"] is False
-    assert "nav" not in saved
-    again = job(db, "research", queue="research", payload={"day": str(target)})
-    run(db, again, settings)
-    second = db.rows("SELECT data FROM reports WHERE kind='backtest' ORDER BY id DESC")[0]["data"]
-    assert second["research_hash"] == saved["research_hash"]
+    with pytest.raises(PipelineBlocked, match="Native evaluation is retired"):
+        run(db, item, settings)
+    assert not db.rows("SELECT * FROM reports WHERE kind='backtest'")
+    assert not db.rows("SELECT * FROM recommendations")
 
 
 def test_data_quality_and_persisted_api_events(db, settings, tmp_path):

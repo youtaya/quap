@@ -1,12 +1,17 @@
 """Independent heartbeats, renewable leases and bounded worker lifecycles."""
 
+import json
 import logging
 import os
+import subprocess
+import sys
+import tempfile
 import signal
 import threading
 import time
 import uuid
 
+from quant_platform.domain.workflow import PipelineBlocked
 from quant_platform.providers import Deferred, PermissionDenied, ProviderError
 from quant_platform.providers.tushare import Tushare
 from quant_platform.storage import LostLease
@@ -14,6 +19,7 @@ from . import analyze, collect
 from .scheduler import tick
 
 LOG = logging.getLogger(__name__)
+MAX_QLIB_LOG_BYTES = 32 * 1024 * 1024
 
 
 class Worker:
@@ -31,7 +37,7 @@ class Worker:
         with self.state_lock:
             job, started = self.job, self.started
         # Kill only this worker process; expired lease recovery is handled by PostgreSQL.
-        if job and time.monotonic() - started > 1800:
+        if job and time.monotonic() - started > self.deadline(job) + 15:
             LOG.error("Worker deadline exceeded; exiting for supervised restart")
             os._exit(1)
         try:
@@ -71,13 +77,15 @@ class Worker:
                     LOG.warning("Lease lost; discarded publication")
                 except Exception as exc:
                     # Provider errors have sanitized messages. Never log unknown exception bodies/DSNs.
-                    safe = str(exc) if isinstance(exc, (ProviderError, Deferred)) else type(exc).__name__
+                    safe = (
+                        str(exc) if isinstance(exc, (ProviderError, Deferred, PipelineBlocked)) else type(exc).__name__
+                    )
                     try:
                         self.db.defer(
                             job,
                             safe,
                             getattr(exc, "seconds", 60 if job["kind"] == "quotes" else 1800),
-                            blocked=isinstance(exc, PermissionDenied),
+                            blocked=isinstance(exc, (PermissionDenied, PipelineBlocked)),
                             transient=isinstance(exc, Deferred),
                         )
                     except LostLease:
@@ -94,9 +102,75 @@ class Worker:
                 self.feed.close()
             self.db.heartbeat(self.owner, self.role, {"status": "stopped"})
 
+    def deadline(self, job):
+        if job["kind"] in {"qlib_train", "qlib_experiment"}:
+            return self.settings.training_deadline_seconds
+        if job["kind"] in {"qlib_prepare", "backup", "qlib_diagnostics", "research_collect"}:
+            return self.settings.data_deadline_seconds
+        if job["kind"] in {"qlib_infer", "qlib_shadow"}:
+            return self.settings.inference_deadline_seconds
+        return 1800
+
+    def qlib_step(self, job):
+        with tempfile.TemporaryFile() as output:
+            process = subprocess.Popen(
+                [sys.executable, "-m", "quant_platform.adapters.qlib.runtime"],
+                stdin=subprocess.PIPE,
+                stdout=output,
+                stderr=output,
+                start_new_session=True,
+            )
+            try:
+                process.stdin.write(json.dumps(job, default=str).encode())
+                process.stdin.close()
+                started = time.monotonic()
+                while process.poll() is None:
+                    if self.stop.wait(0.2):
+                        raise LostLease("Worker stopped before Qlib publication.")
+                    if time.monotonic() - started > self.deadline(job):
+                        raise PipelineBlocked("Qlib task exceeded its configured deadline.")
+                    if os.fstat(output.fileno()).st_size > MAX_QLIB_LOG_BYTES:
+                        raise PipelineBlocked("Qlib task exceeded its diagnostic output limit.")
+                if process.returncode:
+                    output.seek(max(0, output.tell() - 8192))
+                    tail = output.read().decode(errors="replace")
+                    if process.returncode == 3:
+                        reason = next(
+                            (
+                                line.split("QUAP_BLOCKED=", 1)[1]
+                                for line in tail.splitlines()
+                                if line.startswith("QUAP_BLOCKED=")
+                            ),
+                            "Qlib prerequisites are unavailable.",
+                        )
+                        raise PipelineBlocked(reason[:2000])
+                    raise PipelineBlocked(
+                        "Qlib engine step failed; inspect the generation and runtime qualification tests."
+                    )
+            finally:
+                if process.poll() is None:
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                process.wait()
+
     def execute(self, job):
         kind = job["kind"]
-        if kind in {"directory", "calendar", "daily", "factors", "quotes", "doctor", "benchmark"}:
+        if kind in {
+            "directory",
+            "calendar",
+            "daily",
+            "factors",
+            "quotes",
+            "doctor",
+            "benchmark",
+            "minute_history",
+            "minute_live",
+            "minute_repair",
+            "security_history",
+            "constraints",
+        }:
             self.feed = self.feed or Tushare(self.settings, self.db)
         if kind in {"directory", "calendar"}:
             collect.reference(self.db, self.feed, job)
@@ -108,8 +182,24 @@ class Worker:
             collect.benchmark(self.db, self.feed, job)
         elif kind == "intraday":
             analyze.intraday(self.db, job)
-        elif kind == "analyze":
-            analyze.daily(self.db, job, self.settings)
+        elif kind in {"analyze", "research", "qlib_export"}:
+            raise PipelineBlocked("Legacy native analysis/export is retired. Create an explicit Qlib pipeline run.")
+        elif kind in {"qlib_prepare", "qlib_train", "qlib_infer", "qlib_shadow"}:
+            self.qlib_step(job)
+        elif kind == "research_collect":
+            from .supplemental import collect as collect_supplemental
+
+            collect_supplemental(self.db, self.settings, job, self.stop)
+        elif kind in {"qlib_experiment", "qlib_diagnostics"}:
+            from . import experiments, diagnostics
+
+            handler = experiments.execute if kind == "qlib_experiment" else diagnostics.execute
+            handler(self.db, self.settings, job, self.stop)
+        elif kind in {"minute_history", "minute_live", "minute_repair", "security_history", "constraints"}:
+            from . import market
+
+            handler = market.minutes if kind.startswith("minute_") else getattr(market, kind)
+            handler(self.db, self.feed, job)
         elif kind == "refresh":
             tick(self.db, self.settings)
             from quant_platform.storage import jsonb
@@ -142,17 +232,9 @@ class Worker:
             from quant_platform.operations import maintenance, backup
 
             (maintenance if kind == "maintenance" else backup)(self.db, self.settings, job)
-        elif kind == "research":
-            from quant_platform.jobs.research import run
-
-            run(self.db, job, self.settings)
         elif kind == "notify":
             from quant_platform.jobs.notify import deliver
 
             deliver(self.db, self.settings, job)
-        elif kind == "qlib_export":
-            from quant_platform.adapters.qlib.export import export
-
-            export(self.db, self.settings, job)
         else:
             raise ValueError("Unknown job kind.")

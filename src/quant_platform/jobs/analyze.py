@@ -1,8 +1,8 @@
 """Native reports and transactional, edge-triggered research alerts."""
 
-from datetime import date, datetime, timedelta
+from datetime import timedelta
 
-from quant_platform.analysis import ANALYSIS_VERSION, basket_summary, indicators, screen
+from quant_platform.analysis import ANALYSIS_VERSION, basket_summary, indicators
 from quant_platform.domain import CN, ScreenRule, digest, fresh, now, session
 from quant_platform.storage import jsonb
 
@@ -167,94 +167,6 @@ def calendar_indicators(rows, target, calendar):
 
 
 def daily(db, job, settings):
-    target = date.fromisoformat(job["payload"]["day"])
-    snapshot = analysis_snapshot(db, job, target, settings)
-    instruments = snapshot["instruments"]
-    rule = ScreenRule(**snapshot["rule"])
-    metrics = {}
-    calendars = {
-        exchange: {row["day"]: row["is_open"] for row in snapshot["calendars"] if row["exchange"] == exchange}
-        for exchange in ("SSE", "SZSE")
-    }
-    snapshot_hash = digest(snapshot)
-    benchmark_rows = db.history("SH000300", target, snapshot["history_sessions"], snapshot["watermark"])
-    benchmark = calendar_indicators([{**r, "factor": 1.0} for r in benchmark_rows], target, calendars["SSE"])
-    for index, (code, instrument) in enumerate(instruments.items()):
-        rows = db.history(code, target, snapshot["history_sessions"], snapshot["watermark"])
-        result = calendar_indicators(rows, target, calendars[instrument["exchange"]])
-        if instrument["status"] == "U":
-            result["status"] = "unverified_identity"
-        result["snapshot_hash"] = snapshot_hash
-        result["dataset_watermark"] = snapshot["watermark"]
-        result["benchmark_status"] = "available" if benchmark.get("status") == "complete" else "unavailable"
-        result["benchmark_data_versions"] = benchmark["data_versions"]
-        for n in (5, 20, 60):
-            stock_return, index_return = result.get(f"return{n}"), benchmark.get(f"return{n}")
-            result[f"excess_return{n}"] = (
-                stock_return - index_return
-                if (
-                    stock_return is not None
-                    and index_return is not None
-                    and result["benchmark_status"] == "available"
-                    and result["status"] == "complete"
-                )
-                else None
-            )
-        metrics[code] = result
-        # Symbol-level report checkpoints survive an interrupted large analysis run.
-        with db.transaction() as conn:
-            db.fence(conn, job)
-            report(conn, "stock", code, target, result)
-            if index % 50 == 0:
-                conn.execute(
-                    "UPDATE jobs SET progress=progress || %s WHERE id=%s",
-                    (jsonb({"done": index + 1, "total": len(instruments)}), job["id"]),
-                )
-    output = screen(instruments, metrics, target, rule)
-    output["rule_revision"] = snapshot["rule_revision"]
-    output["dataset_watermark"] = snapshot["watermark"]
-    output["snapshot_hash"] = snapshot_hash
-    output["snapshot"] = snapshot
-    output["inputs"] = {code: item.get("input_hash") for code, item in metrics.items()}
-    output["status"] = "complete" if output["coverage"] == 1 else "partial"
-    baskets = snapshot["baskets"]
-    with db.publication(job) as conn:
-        report(conn, "screen", "default", target, output)
-        for basket in baskets:
-            if basket["paused"]:
-                continue
-            members = basket["data"]["members"]
-            available = {
-                code: metrics[code] for code in members if code in metrics and metrics[code].get("status") == "complete"
-            }
-            coverage = sum(weight for code, weight in members.items() if code in available)
-            report(
-                conn,
-                "basket",
-                basket["id"],
-                target,
-                {
-                    "name": basket["data"]["name"],
-                    "basket_revision": basket["revision"],
-                    "snapshot_hash": snapshot_hash,
-                    "coverage": coverage,
-                    "members": available,
-                    "missing": sorted(set(members) - set(available)),
-                    "weights": members,
-                    "analysis_version": ANALYSIS_VERSION,
-                    "as_of": str(target),
-                    "status": "complete" if coverage >= 1 - 1e-10 else "partial",
-                    "interpretation": "Research indicators and risk flags; no trade execution or return guarantee.",
-                },
-            )
-        db.set_setting(
-            conn, "last_analysis", {"as_of": str(target), "at": now().isoformat(), "coverage": output["coverage"]}
-        )
-        if settings.qlib_enabled:
-            db.enqueue(
-                conn,
-                "qlib_export",
-                "qlib",
-                f"qlib:{target}:{digest(output['inputs'])}",
-                {"day": str(target), "watermark": snapshot["watermark"]},
-            )
+    from quant_platform.domain.workflow import PipelineBlocked
+
+    raise PipelineBlocked("Native recommendation publishing is retired. Create a Qlib inference pipeline run.")

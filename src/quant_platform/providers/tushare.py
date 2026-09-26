@@ -3,12 +3,11 @@
 import json
 import random
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import httpx
 
 from quant_platform.domain import CN, board, digest, fresh, now, number, provider_code, source_time, symbol
-from quant_platform.storage import jsonb
 from . import Deferred, PermissionDenied, ProviderError
 
 FIELDS = {
@@ -19,7 +18,14 @@ FIELDS = {
     "adj_factor": "ts_code,trade_date,adj_factor",
     "suspend_d": "ts_code,trade_date,suspend_type",
     "rt_k": "ts_code,name,pre_close,open,high,low,close,vol,amount,trade_time",
+    "stk_mins": "ts_code,trade_time,open,high,low,close,vol,amount",
+    "rt_min": "ts_code,time,open,high,low,close,vol,amount",
+    "rt_min_daily": "ts_code,time,open,high,low,close,vol,amount",
+    "namechange": "ts_code,name,start_date,end_date,ann_date,change_reason",
+    "stk_limit": "ts_code,trade_date,up_limit,down_limit",
 }
+MINUTE_ENDPOINTS = {"stk_mins", "rt_min", "rt_min_daily"}
+ROW_LIMITS = {"stk_mins": 8000, "rt_min": 1000, "rt_min_daily": 1000, "namechange": 6000, "stk_limit": 6000}
 
 
 class Budget:
@@ -32,11 +38,16 @@ class Budget:
         minute, day = at.replace(second=0, microsecond=0), at.astimezone(CN).replace(
             hour=0, minute=0, second=0, microsecond=0
         )
-        group = "real-time" if endpoint == "rt_k" else "ordinary"
-        limit = self.settings.realtime_rpm if endpoint == "rt_k" else self.settings.ordinary_rpm
+        group = "minute" if endpoint in MINUTE_ENDPOINTS else "real-time" if endpoint == "rt_k" else "ordinary"
+        limit = (
+            self.settings.minute_rpm
+            if group == "minute"
+            else self.settings.realtime_rpm if group == "real-time" else self.settings.ordinary_rpm
+        )
+        daily_limit = self.settings.minute_daily_quota if group == "minute" else self.settings.daily_quota
         with self.db.transaction() as conn:
             conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s,0))", (self.key,))
-            for window, name, maximum in ((minute, group, limit), (day, endpoint + ":day", self.settings.daily_quota)):
+            for window, name, maximum in ((minute, group, limit), (day, endpoint + ":day", daily_limit)):
                 row = conn.execute(
                     "SELECT used FROM quota WHERE credential=%s AND endpoint=%s AND window_start=%s",
                     (self.key, name, window),
@@ -124,7 +135,7 @@ class Tushare:
                     or len(set(columns)) != len(columns)
                     or not set(requested).issubset(columns)
                     or not isinstance(items, list)
-                    or len(items) > 6000
+                    or len(items) > ROW_LIMITS.get(endpoint, 6000)
                 ):
                     raise ProviderError("Provider schema or row limit changed.")
                 if any(not isinstance(row, list) or len(row) != len(columns) for row in items):
@@ -198,6 +209,44 @@ class Tushare:
                 raise ProviderError("Real-time batch missing, duplicated, or unexpected identities.")
             result.extend(parsed)
         return result
+
+    def minutes(self, endpoint, codes, start=None, end=None, at=None):
+        if endpoint not in MINUTE_ENDPOINTS:
+            raise ProviderError("Unsupported minute endpoint.")
+        codes = sorted(set(symbol(code) for code in codes))
+        at = at or now()
+        output = []
+        batches = (
+            [codes[i : i + 100] for i in range(0, len(codes), 100)] if endpoint == "rt_min" else [[c] for c in codes]
+        )
+        for batch in batches:
+            params = {
+                "ts_code": ",".join(provider_code(c) for c in batch),
+                "freq": "5min" if endpoint == "stk_mins" else "5MIN",
+            }
+            if endpoint == "stk_mins":
+                if start is None or end is None:
+                    raise ProviderError("Historical minute requests need bounded dates.")
+                params.update(
+                    start_date=start.astimezone(CN).strftime("%Y-%m-%d %H:%M:%S"),
+                    end_date=end.astimezone(CN).strftime("%Y-%m-%d %H:%M:%S"),
+                )
+            rows = self.request(endpoint, params)
+            if len(rows) >= ROW_LIMITS[endpoint]:
+                raise ProviderError("Minute response may be truncated; shorten the request window.")
+            seen = set()
+            for raw in rows:
+                bar = parse_minute(raw, endpoint, at)
+                if bar is None:
+                    continue
+                identity = (bar["symbol"], bar["bar_end"])
+                if bar["symbol"] not in batch or identity in seen:
+                    raise ProviderError("Minute response has unexpected or duplicate identities.")
+                if start and bar["bar_end"] < start or end and bar["bar_end"] > end:
+                    raise ProviderError("Minute response is outside the requested interval.")
+                seen.add(identity)
+                output.append(bar)
+        return sorted(output, key=lambda row: (row["bar_end"], row["symbol"]))
 
     def daily_partition(self, endpoint, day, codes, job=None):
         params = {"trade_date": day.strftime("%Y%m%d")}
@@ -284,6 +333,32 @@ def parse_bar(row):
         **prices(row),
         "volume": positive(row.get("vol"), 100),
         "turnover": positive(row.get("amount"), 1000),
+    }
+
+
+def parse_minute(row, endpoint, at=None):
+    at = at or now()
+    stamp = source_time(row.get("trade_time" if endpoint == "stk_mins" else "time"))
+    if stamp is None:
+        raise ProviderError("Minute bars require a complete source timestamp.")
+    minute = stamp.hour * 60 + stamp.minute
+    # Opening auction rows have no five-minute interval and are not synthesized into one.
+    if minute in {570, 780}:
+        return None
+    if stamp.second or stamp.minute % 5 or not (575 <= minute <= 690 or 785 <= minute <= 900):
+        raise ProviderError("Minute bar is not on a canonical five-minute session boundary.")
+    volume, amount = positive(row.get("vol")), positive(row.get("amount"))
+    if volume is None or amount is None:
+        raise ProviderError("Minute volume/amount must be finite and nonnegative.")
+    return {
+        "symbol": symbol(row["ts_code"]),
+        "bar_end": stamp.astimezone(timezone.utc),
+        "bar_start": (stamp - timedelta(minutes=5)).astimezone(timezone.utc),
+        "available_at": at.astimezone(timezone.utc),
+        "finalized": stamp < at,
+        **{k: v for k, v in prices(row).items() if k != "pre_close"},
+        "volume": volume,
+        "amount": amount,
     }
 
 

@@ -2,7 +2,6 @@
 
 import json
 from contextlib import contextmanager
-from datetime import timedelta
 
 import psycopg
 from psycopg import sql as pg_sql
@@ -10,7 +9,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
-from quant_platform.domain import digest, now
+from quant_platform.domain import digest
 
 
 def jsonb(value):
@@ -90,9 +89,18 @@ class Database:
 
     def claim(self, queue, owner):
         with self.transaction() as conn:
+            if queue in {"research-data", "qlib-research", "qlib-diagnostics"}:
+                conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s,0))", ("single-worker:" + queue,))
+                if conn.execute(
+                    "SELECT 1 FROM jobs WHERE queue=%s AND status='running' AND lease_until>clock_timestamp() LIMIT 1",
+                    (queue,),
+                ).fetchone():
+                    return None
             return conn.execute(
                 "WITH candidate AS (SELECT id FROM jobs WHERE queue=%s AND available_at<=now() AND "
                 "(status='pending' OR (status='running' AND lease_until<now())) "
+                "AND NOT EXISTS(SELECT 1 FROM job_dependencies d JOIN jobs p ON p.id=d.parent_id "
+                "WHERE d.job_id=jobs.id AND p.status!='complete') "
                 "ORDER BY priority DESC,available_at,id FOR UPDATE SKIP LOCKED LIMIT 1) "
                 "UPDATE jobs j SET status='running',owner=%s,fence=fence+1,attempts=attempts+1,"
                 "lease_until=now()+interval '60 seconds',updated_at=now() FROM candidate c "
@@ -149,6 +157,11 @@ class Database:
                 "UPDATE jobs SET status=%s,error=%s,available_at=now()+(%s * interval '1 second'),failures=%s,"
                 "lease_until=NULL,updated_at=now() WHERE id=%s",
                 (status, error, delay, failures, job["id"]),
+            )
+            conn.execute(
+                "UPDATE pipeline_runs SET state=%s,error=%s,updated_at=now() WHERE id IN "
+                "(SELECT run_id FROM pipeline_steps WHERE job_id=%s)",
+                (status if status in {"blocked", "failed"} else "waiting", error, job["id"]),
             )
 
     def checkpoint(self, job, endpoint, code, data):

@@ -4,7 +4,6 @@ import hashlib
 import os
 import re
 import shutil
-import subprocess
 from datetime import datetime, timedelta
 from pathlib import Path
 from psycopg import pq, sql
@@ -13,7 +12,7 @@ from psycopg.conninfo import conninfo_to_dict
 from quant_platform.domain import CN, now, fresh, session
 from quant_platform.analysis import basket_summary
 from quant_platform.observations import count_lines
-from quant_platform.providers import ProviderError, PermissionDenied
+from quant_platform.providers import ProviderError
 from quant_platform.providers.tushare import Tushare
 from quant_platform.storage import jsonb
 
@@ -253,7 +252,7 @@ def status(db, settings):
         "analysis_target": db.setting("analysis_target"),
         "polling_paused": db.setting("polling_paused", False),
         "backup": db.setting("backup"),
-        "qlib": db.setting("qlib", {"enabled": settings.qlib_enabled, "status": "not_published"}),
+        "qlib": __import__("quant_platform.pipeline", fromlist=["readiness"]).readiness(db, settings),
         "incidents": db.rows("SELECT * FROM incidents ORDER BY updated_at DESC"),
         "qualification": db.setting("qualification", {"status": "pending", "required_trading_sessions": 2}),
         "data_quality": data_quality(db, at),
@@ -278,6 +277,16 @@ def doctor(db, settings, feed=None):
         "rt_k": {"ts_code": "600895.SH"},
         "index_daily": {"ts_code": "000300.SH", "trade_date": completed.strftime("%Y%m%d")},
         "suspend_d": {"trade_date": completed.strftime("%Y%m%d")},
+        "stk_limit": {"ts_code": "600895.SH", "trade_date": completed.strftime("%Y%m%d")},
+        "namechange": {"ts_code": "600895.SH"},
+        "stk_mins": {
+            "ts_code": "600895.SH",
+            "freq": "5min",
+            "start_date": f"{completed} 09:30:00",
+            "end_date": f"{completed} 15:00:00",
+        },
+        "rt_min": {"ts_code": "600895.SH", "freq": "5MIN"},
+        "rt_min_daily": {"ts_code": "600895.SH", "freq": "5MIN"},
     }
     successful = set()
     try:
@@ -290,7 +299,9 @@ def doctor(db, settings, feed=None):
                 successful.add(endpoint)
             except ProviderError:
                 pass
-        required = {"stock_basic", "trade_cal", "daily", "adj_factor", "rt_k"}
+        from quant_platform.pipeline import DAILY_CAPABILITIES, MINUTE_CAPABILITIES
+
+        required = DAILY_CAPABILITIES | {"rt_k"}
         with db.transaction() as conn:
             dependencies = {
                 "directory": {"stock_basic"},
@@ -299,6 +310,11 @@ def doctor(db, settings, feed=None):
                 "factors": {"adj_factor"},
                 "quotes": {"rt_k"},
                 "benchmark": {"index_daily"},
+                "security_history": {"namechange"},
+                "constraints": {"stk_limit", "suspend_d"},
+                "minute_history": {"stk_mins", "trade_cal"},
+                "minute_live": {"rt_min", "trade_cal"},
+                "minute_repair": {"rt_min_daily", "trade_cal"},
             }
             kinds = [kind for kind, endpoints in dependencies.items() if endpoints <= successful]
             conn.execute(
@@ -313,9 +329,15 @@ def doctor(db, settings, feed=None):
                     "checked_at": now().isoformat(),
                     "successful": sorted(successful),
                     "required_available": required <= successful,
+                    "intraday_available": (DAILY_CAPABILITIES | MINUTE_CAPABILITIES) <= successful,
                 },
             )
-        return {"successful": sorted(successful), "missing": sorted(required - successful), "live_soak": "pending"}
+        return {
+            "successful": sorted(successful),
+            "missing": sorted(required - successful),
+            "intraday_missing": sorted((DAILY_CAPABILITIES | MINUTE_CAPABILITIES) - successful),
+            "live_soak": "pending",
+        }
     finally:
         if owned:
             feed.close()
@@ -328,7 +350,14 @@ def maintenance(db, settings, job):
         for offset in (1, 2, 3):
             start = (at + timedelta(days=offset)).date()
             end = start + timedelta(days=1)
-            for table, column in (("quotes", "collected_at"), ("alerts", "recorded_at")):
+            for table, column in (("quotes", "collected_at"), ("alerts", "recorded_at"), ("minute_bars", "bar_end")):
+                if (
+                    table == "minute_bars"
+                    and conn.execute(
+                        "SELECT 1 FROM minute_bars_default WHERE bar_end>=%s AND bar_end<%s LIMIT 1", (start, end)
+                    ).fetchone()
+                ):
+                    continue
                 name = f"{table}_{start:%Y%m%d}"
                 conn.execute(
                     sql.SQL("CREATE TABLE IF NOT EXISTS {} PARTITION OF {} FOR VALUES FROM ({}) TO ({})").format(
@@ -375,8 +404,14 @@ def maintenance(db, settings, job):
                 if retired >= 10:
                     break
         conn.execute(
-            "DELETE FROM jobs WHERE id IN (SELECT id FROM jobs WHERE status='complete' "
-            "AND updated_at<now()-interval '30 days' ORDER BY id LIMIT 10000)"
+            "DELETE FROM jobs WHERE id IN (SELECT j.id FROM jobs j WHERE j.status='complete' "
+            "AND j.updated_at<now()-interval '30 days' AND j.kind!='minute_history' "
+            "AND NOT EXISTS(SELECT 1 FROM pipeline_steps s WHERE s.job_id=j.id) "
+            "AND NOT EXISTS(SELECT 1 FROM research_collections c WHERE c.job_id=j.id) "
+            "AND NOT EXISTS(SELECT 1 FROM research_experiments e WHERE e.job_id=j.id) "
+            "AND NOT EXISTS(SELECT 1 FROM diagnostic_inputs i WHERE i.job_id=j.id) "
+            "AND NOT EXISTS(SELECT 1 FROM job_dependencies d WHERE d.job_id=j.id OR d.parent_id=j.id) "
+            "ORDER BY j.id LIMIT 10000)"
         )
         conn.execute(
             "DELETE FROM datasets d WHERE id IN (SELECT id FROM datasets WHERE endpoint='rt_k' "
@@ -384,6 +419,9 @@ def maintenance(db, settings, job):
             "AND NOT EXISTS(SELECT 1 FROM quotes q WHERE q.id=d.id) "
             "AND NOT EXISTS(SELECT 1 FROM latest_quotes q WHERE q.dataset_id=d.id)"
         )
+        from quant_platform.storage.artifacts import prune_orphans
+
+        prune_orphans(conn, settings, at)
         backup_state = db.setting("backup", {})
         old = not backup_state or at - datetime.fromisoformat(backup_state["at"]) > timedelta(hours=30)
         settings.artifact_root.mkdir(parents=True, exist_ok=True)
@@ -412,91 +450,13 @@ def pg_environment(dsn):
 
 
 def backup(db, settings, job):
-    root = settings.backup_root.resolve()
-    root.mkdir(parents=True, exist_ok=True)
-    name = "quant-" + now().strftime("%Y%m%dT%H%M%S") + ".dump"
-    temporary, target = root / (name + ".pending"), root / name
-    result = subprocess.run(
-        ["pg_dump", "--format=custom", "--no-owner", "--file", str(temporary)],
-        env=pg_environment(settings.dsn),
-        capture_output=True,
-        timeout=600,
-    )
-    if result.returncode:
-        raise RuntimeError("Backup failed; verify PostgreSQL client and backup volume.")
-    with temporary.open("rb") as stream:
-        os.fsync(stream.fileno())
-    os.replace(temporary, target)
-    with target.open("rb") as stream:
-        checksum = hashlib.file_digest(stream, "sha256").hexdigest()
-    replica = None
-    if settings.backup_replica_root:
-        replica = copy_verified_replica(target, settings.backup_replica_root, checksum)
-    with db.publication(job) as conn:
-        db.set_setting(
-            conn,
-            "backup",
-            {
-                "at": now().isoformat(),
-                "file": name,
-                "bytes": target.stat().st_size,
-                "sha256": checksum,
-                "restore_verified": False,
-                "replica": replica,
-            },
-        )
-    for old in sorted(root.glob("quant-????????T??????.dump"))[:-7]:
-        if not old.is_symlink() and old.parent == root:
-            old.unlink()
+    from quant_platform.storage.artifacts import backup as snapshot_backup
+
+    return snapshot_backup(db, settings, job)
 
 
-def restore_check(archive, target_dsn, source_db=None, fault_at=None):
-    """Only restore into an explicitly named empty verification database."""
-    import psycopg
+def restore_check(archive, target_dsn, source_db=None, fault_at=None, artifact_root=None):
+    """Verify a consistent database/artifact bundle in an isolated destination."""
+    from quant_platform.storage.artifacts import restore_check as restore_bundle
 
-    started = now()
-    env = pg_environment(target_dsn)
-    if not env["PGDATABASE"].startswith("quant_restore_"):
-        raise ValueError("Restore verification requires a separate quant_restore_* database.")
-    with psycopg.connect(target_dsn) as conn:
-        if conn.execute("SELECT count(*) FROM information_schema.tables WHERE table_schema='public'").fetchone()[0]:
-            raise ValueError("Verification database must be empty.")
-    result = subprocess.run(
-        ["pg_restore", "--exit-on-error", "--no-owner", "--dbname", env["PGDATABASE"], str(Path(archive).resolve())],
-        env=env,
-        capture_output=True,
-        timeout=600,
-    )
-    if result.returncode:
-        raise RuntimeError("Restore validation failed.")
-    with psycopg.connect(target_dsn) as conn:
-        result = {
-            "schema": conn.execute("SELECT version_num FROM alembic_version").fetchone()[0],
-            "reports": conn.execute("SELECT count(*) FROM reports").fetchone()[0],
-            "restored": True,
-        }
-    with Path(archive).open("rb") as stream:
-        checksum = hashlib.file_digest(stream, "sha256").hexdigest()
-    finished = now()
-    fault = fault_at or started
-    backup_at = None
-    if source_db:
-        with source_db.transaction() as conn:
-            saved = conn.execute("SELECT value FROM settings WHERE key='backup' FOR UPDATE").fetchone()
-            if saved and saved["value"].get("sha256") == checksum:
-                backup_at = datetime.fromisoformat(saved["value"]["at"])
-                timing = recovery_times(backup_at, fault, finished)
-                result = {**result, **timing}
-                source_db.set_setting(
-                    conn,
-                    "backup",
-                    {
-                        **saved["value"],
-                        "restore_verified": True,
-                        "verified_at": finished.isoformat(),
-                        "verification": result,
-                    },
-                )
-    elif backup_at is None:
-        result = {**result, **recovery_times(fault, fault, finished)}
-    return result
+    return restore_bundle(archive, target_dsn, source_db, fault_at, artifact_root)

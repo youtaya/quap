@@ -17,8 +17,9 @@ from pydantic import Field
 
 from quant_platform.config import Settings
 from quant_platform.domain import BasketInput, CN, ScreenRule, StrictModel, fresh, now, symbol
+from quant_platform.domain.workflow import PipelineBlocked
 from quant_platform.storage import Database, jsonb
-from quant_platform.storage.baskets import Conflict, save_basket
+from quant_platform.storage.baskets import Conflict
 
 
 class Control(StrictModel):
@@ -44,6 +45,10 @@ class RuleInput(StrictModel):
 class Approval(StrictModel):
     name: str = Field(min_length=1, max_length=120)
     symbols: list[str] = Field(min_length=1, max_length=200)
+
+
+class MarketReportRequest(StrictModel):
+    as_of: date
 
 
 def create_app(settings=None, database=None, read_database=None):
@@ -121,6 +126,10 @@ def create_app(settings=None, database=None, read_database=None):
     async def conflict_handler(_, exc):
         return JSONResponse(status_code=409, content={"detail": str(exc)})
 
+    @app.exception_handler(PipelineBlocked)
+    async def pipeline_blocked_handler(_, exc):
+        return JSONResponse(status_code=409, content={"detail": str(exc), "state": "blocked", "native_fallback": False})
+
     @app.exception_handler(Exception)
     async def failure_handler(_, exc):
         return JSONResponse(status_code=503, content={"detail": "Backend unavailable; inspect operator diagnostics."})
@@ -182,7 +191,8 @@ def create_app(settings=None, database=None, read_database=None):
         with store.transaction() as conn:
             row = conn.execute(
                 "UPDATE jobs SET status='pending',failures=0,available_at=now(),error=NULL "
-                "WHERE id=%s AND status='failed' RETURNING id",
+                "WHERE id=%s AND status='failed' AND queue NOT IN ('research-data','qlib-research','qlib-diagnostics') "
+                "AND NOT EXISTS(SELECT 1 FROM pipeline_steps s WHERE s.job_id=jobs.id) RETURNING id",
                 (job_id,),
             ).fetchone()
             if not row:
@@ -227,13 +237,13 @@ def create_app(settings=None, database=None, read_database=None):
 
     @router.post("/baskets", status_code=201)
     def create_basket(value: BasketInput, store=Depends(db)):
-        with store.transaction() as conn:
-            return save_basket(conn, value)
+        raise HTTPException(
+            410, "Legacy baskets are read-only. Use model-portfolios with explicit target weights and cash."
+        )
 
     @router.put("/baskets/{basket_id}")
     def edit_basket(basket_id: UUID, value: BasketInput, store=Depends(db)):
-        with store.transaction() as conn:
-            return save_basket(conn, value, basket_id)
+        raise HTTPException(410, "Legacy baskets are read-only. Use the migrated model-portfolio revision.")
 
     @router.get("/baskets/{basket_id}/revisions")
     def revisions(basket_id: UUID, store=Depends(reads)):
@@ -273,22 +283,11 @@ def create_app(settings=None, database=None, read_database=None):
 
     @router.put("/rules")
     def change_rule(value: RuleInput, store=Depends(db)):
-        with store.transaction() as conn:
-            conn.execute("SELECT pg_advisory_xact_lock(77610232)")
-            previous = conn.execute("SELECT coalesce(max(revision),0) AS revision FROM rules").fetchone()
-            if previous["revision"] != value.expected_revision:
-                raise Conflict("Rule revision conflict.")
-            row = conn.execute(
-                "INSERT INTO rules(data) VALUES(%s) RETURNING revision", (jsonb(value.rule.model_dump()),)
-            ).fetchone()
-            conn.execute(
-                "INSERT INTO audit(action,target,data) VALUES('rule','default',%s)", (jsonb(value.model_dump()),)
-            )
-            return row
+        raise HTTPException(410, "Native screening is retired. Use the versioned Qlib scan-policy resource.")
 
     @router.get("/reports")
     def reports(
-        kind: Literal["stock", "basket", "screen", "factor", "backtest"] = "basket",
+        kind: Literal["stock", "basket", "screen", "factor", "backtest", "market"] = "basket",
         target: str | None = None,
         limit: int = Query(100, ge=1, le=500),
         store=Depends(reads),
@@ -299,26 +298,49 @@ def create_app(settings=None, database=None, read_database=None):
             (kind, target, target, limit),
         )
 
+    @router.get("/market-report")
+    def market_report(as_of: date | None = None, store=Depends(reads)):
+        from quant_platform.analysis import market_report as reports_module
+
+        row = reports_module.latest(store, as_of)
+        if row is None:
+            return {
+                "report": None,
+                "markdown": None,
+                "reason": "No descriptive market report stored yet; request one with POST /market-report.",
+            }
+        return {
+            "report": row["data"],
+            "markdown": reports_module.render_markdown(row["data"]),
+            "report_id": row["id"],
+            "as_of": row["as_of"],
+            "created_at": row["created_at"],
+            "engine": row["engine"],
+        }
+
+    @router.post("/market-report", status_code=202)
+    def request_market_report(value: MarketReportRequest, store=Depends(db)):
+        revision = int(now().timestamp()) // 60
+        with store.transaction() as conn:
+            job_id = store.enqueue(
+                conn,
+                "market_report",
+                "analysis",
+                f"market-report:{value.as_of}:{revision}",
+                {"as_of": str(value.as_of)},
+                50,
+            )
+            conn.execute(
+                "INSERT INTO audit(action,target,data) VALUES('market_report',%s,%s)",
+                (str(value.as_of), jsonb({"job_id": job_id})),
+            )
+        return {"job_id": job_id}
+
     @router.post("/candidates/{report_id}/approve", status_code=201)
     def approve(report_id: int, value: Approval, store=Depends(db)):
-        with store.transaction() as conn:
-            row = conn.execute("SELECT data FROM reports WHERE id=%s AND kind='screen'", (report_id,)).fetchone()
-            try:
-                selected = [symbol(s) for s in value.symbols]
-            except ValueError as exc:
-                raise HTTPException(422, str(exc)) from None
-            if (
-                not row
-                or not set(selected).issubset({r["symbol"] for r in row["data"]["candidates"]})
-                or len(set(selected)) != len(selected)
-            ):
-                raise Conflict("Selection is not a unique subset of this report's candidates.")
-            result = save_basket(conn, BasketInput(name=value.name, members={s: 1 for s in selected}))
-            conn.execute(
-                "INSERT INTO audit(action,target,data) VALUES('candidate_approval',%s,%s)",
-                (str(report_id), jsonb(result)),
-            )
-            return result
+        raise HTTPException(
+            410, "Legacy native reports cannot be approved. Accept a valid Qlib recommendation instead."
+        )
 
     @router.get("/alerts")
     def alerts(store=Depends(reads)):
@@ -337,6 +359,19 @@ def create_app(settings=None, database=None, read_database=None):
 
     @router.post("/control", status_code=202)
     def control(value: Control, store=Depends(db)):
+        if value.action in {"analyze", "research"}:
+            from quant_platform.pipeline import create_run
+
+            run = create_run(
+                store,
+                settings,
+                {
+                    "purpose": "training" if value.action == "research" else "inference",
+                    "frequency": "day",
+                    "request_key": f"manual:{uuid4()}",
+                },
+            )
+            return {"run_id": str(run["id"]), "state": run["state"]}
         with store.transaction() as conn:
             if value.action in {"pause", "resume"}:
                 store.set_setting(conn, "polling_paused", value.action == "pause")
@@ -361,5 +396,10 @@ def create_app(settings=None, database=None, read_database=None):
             )
             return {"job_id": job_id}
 
+    from .workflow import create_workflow_router
+    from .research import create_research_router
+
+    router.include_router(create_workflow_router(db, reads, settings))
+    router.include_router(create_research_router(db, reads, settings))
     app.include_router(router)
     return app
