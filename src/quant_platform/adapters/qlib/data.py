@@ -38,14 +38,109 @@ FIELDS = (
 )
 
 
+def declared_scope(snapshot):
+    """The securities this run intended to collect.
+
+    Coverage has to be measured against the declared collection scope, not against the listed master.
+    Under the default ``history_scope=index`` the platform only collects CSI 300 members plus the
+    observation baskets, so dividing by every listed A-share reports a permanent ~5% and blocks
+    training while the collection is in fact complete. Runs frozen before the scope was recorded fall
+    back to the instruments they were frozen with, which is the same set for a full-market scope.
+    """
+    return {str(code) for code in (snapshot.get("scope") or snapshot["instruments"])}
+
+
+def protected_codes(snapshot):
+    """Securities a non-training run may not drop: frozen portfolios, watchlist and daily baselines.
+
+    These sit outside the index scope by construction — an operator can hold anything — so they are
+    added to the collection set rather than being silently absent from the generation.
+    """
+    protected = {
+        code
+        for portfolio in snapshot.get("portfolios", [])
+        for code, weight in portfolio["data"]["weights"].items()
+        if weight > 0
+    }
+    baselines = list(snapshot.get("portfolio_daily_baselines", {}).values())
+    if snapshot.get("daily_baseline"):
+        baselines.append(snapshot["daily_baseline"])
+    protected.update(
+        code for baseline in baselines for code, weight in baseline["data"]["weights"].items() if weight > 0
+    )
+    return protected
+
+
+def coverage_detail(snapshot, scope, eligible, ready, omitted, risk_uncovered, window_sessions, sessions):
+    """Per-reason accounting of what entered the generation and what did not.
+
+    A shortfall that is only reported as one percentage cannot be acted on, and a shortfall that is
+    not reported at all is a silent sample cut. Every excluded security is named by reason here, the
+    point-in-time risk state gap is stated as a limitation of the tokenless sources rather than as
+    "no risk", and the depth of the adjusted window is reported per security because the front-adjusted
+    series the reachable sources publish is shallower than the analysis window (see ``factor_sessions``).
+    """
+    reasons = {}
+    for reason in omitted.values():
+        reasons[reason] = reasons.get(reason, 0) + 1
+    universe = len(snapshot["instruments"])
+    covered = sorted(set(eligible) - set(risk_uncovered))
+    return {
+        "scope_mode": snapshot.get("scope_mode", "unknown"),
+        "declared_scope": len(scope),
+        "eligible": len(eligible),
+        "ready": len(set(ready) & set(eligible)),
+        "omitted_by_reason": dict(sorted(reasons.items())),
+        "universe": universe,
+        # 诊断用：整张上市主表里的占比。采集范围默认只是沪深 300，这个数天然很低，绝不能当门槛。
+        "universe_coverage": len(set(ready)) / universe if universe else 0,
+        "risk_state": {
+            "dated": False,
+            "source": "observed_security_name",
+            "covered_securities": len(covered),
+            "uncovered_securities": len(set(eligible) - set(covered)),
+            "note": (
+                "公开源不发布带日期的更名/风险公告，观测日之前的历史 K 线没有点位风险状态。这些"
+                "样本的风险特征是 NaN（未知），不是「无风险」；训练接受未知，推断不接受。"
+            ),
+        },
+        "adjusted_window": {
+            "window_sessions": sessions,
+            "securities": len(window_sessions),
+            "minimum": min(window_sessions.values()) if window_sessions else 0,
+            "median": sorted(window_sessions.values())[len(window_sessions) // 2] if window_sessions else 0,
+            "maximum": max(window_sessions.values()) if window_sessions else 0,
+            "shorter_than_window": sum(1 for value in window_sessions.values() if value < sessions),
+            "note": (
+                "腾讯前复权约 800 会话封顶，所以各股可用深度不同，深度与上市时间、流动性相关。"
+                "按共同可用窗口取交集会砍掉大部分样本，因此这里只如实记录，不静默截齐。"
+            ),
+        },
+    }
+
+
 def checksum(path):
     with Path(path).open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
 def safe_artifact(root, relative):
+    """Resolve an owned artifact, reporting a missing one as a blocked prerequisite.
+
+    A run that pins a generation which is no longer on disk used to die with a bare
+    ``FileNotFoundError`` from ``resolve(strict=True)`` — a crash, not a blocked prerequisite, so the
+    operator got an engine traceback instead of the one fact that matters: the pinned input is gone
+    and the run has to be re-created. Disk retention must not prune a pinned generation (see
+    ``GenerationStore.publish``); this is the backstop for the ones that were pruned before that.
+    """
     base = Path(root).resolve()
-    path = (base / relative).resolve(strict=True)
+    try:
+        path = (base / relative).resolve(strict=True)
+    except FileNotFoundError:
+        raise PipelineBlocked(
+            f"The pinned generation artifact is missing from the owned root ({relative}); the run cannot "
+            "be replayed and has to be re-created."
+        ) from None
     if not path.is_relative_to(base) or path == base:
         raise PipelineBlocked("Artifact path is outside the owned root.")
     return path
@@ -160,6 +255,8 @@ def build_generation(db, settings, run, job):
     days = all_days[-count:]
     if not days or days[-1] != target:
         raise PipelineBlocked("Input cutoff is not a verified completed trading session.")
+    scope = declared_scope(snapshot)
+    protected = protected_codes(snapshot) if run["purpose"] != "training" else set()
     codes = list(snapshot["instruments"])
     dated_pools = {}
     if freq == "5min":
@@ -183,6 +280,10 @@ def build_generation(db, settings, run, job):
             codes = pool["symbols"]
             if not snapshot.get("daily_baseline"):
                 raise PipelineBlocked("Intraday inference requires a published Qlib daily baseline.")
+    else:
+        # 覆盖判定对「声明要采集的范围」做，不对整张上市主表做，见 ``declared_scope``。推断还要把被
+        # 冻结的账簿与观察名单纳入，否则它们会因为不在指数范围里而缺席代次。
+        codes = sorted(scope | protected)
     histories, anchors = {}, {}
     calendar = (
         days
@@ -199,19 +300,30 @@ def build_generation(db, settings, run, job):
         calendar = calendar[-20 * 48 :]
     calendar_stamps = {str(stamp) for stamp in calendar}
     ready, omitted = [], {}
+    risk_uncovered, window_sessions = set(), {}
     training_ready = {str(day): set() for day in days[20:]} if freq == "5min" and run["purpose"] == "training" else {}
     positions = {str(stamp): index for index, stamp in enumerate(calendar)}
     for code in codes + (["SH000300"] if freq == "day" else []):
         daily = db.history(code, target, snapshot["history_sessions"], watermark)
         daily = [{**r, "factor": 1.0 if code == "SH000300" else r["factor"]} for r in daily]
-        if not daily or not daily[0].get("factor"):
+        # 复权因子只覆盖源发布的最深窗口（腾讯前复权约 800 会话，见 ``factor_sessions``），窗口更早
+        # 的那一段没有因子。要求窗口最老一行必须有因子会把「因子从某天起才可用」误判成「这只证券不
+        # 可用」，把整批证券挡在代次之外；只要求存在已复权行，锚点钉在最老的那一行已复权行上，
+        # 与 ``write_bins`` 取 ``usable[0]`` 的口径一致。未复权价绝不进代次。
+        adjusted = [row for row in daily if row.get("factor")]
+        if not daily or not adjusted:
             omitted[code] = "missing_daily_history_or_adjustment"
             continue
         with db.transaction() as conn:
             db.fence(conn, job)
             conn.execute(
                 "INSERT INTO normalization_anchors VALUES(%s,%s,%s,%s) ON CONFLICT DO NOTHING",
-                (code, float(daily[0]["data"]["close"]) * daily[0]["factor"], daily[0]["day"], daily[0]["dataset_id"]),
+                (
+                    code,
+                    float(adjusted[0]["data"]["close"]) * adjusted[0]["factor"],
+                    adjusted[0]["day"],
+                    adjusted[0]["dataset_id"],
+                ),
             )
             anchors[code] = conn.execute(
                 "SELECT anchor FROM normalization_anchors WHERE symbol=%s", (code,)
@@ -256,6 +368,7 @@ def build_generation(db, settings, run, job):
                     if row["day"] == target and factors:
                         row["factor"] = factors[0]["factor"]
         rows = [row for row in rows if str(row["time"]) in calendar_stamps]
+        window_sessions[code] = len(rows)
         for row in rows:
             day = row["day"]
             candidates = [
@@ -277,7 +390,12 @@ def build_generation(db, settings, run, job):
                 else len(all_days)
             )
             row["features"] = {
+                # 没有点位状态覆盖这根 K 线时是 NaN（未知），不是 0（无风险）。``Market.security_history``
+                # 只从观测当天起发布状态，所以观测日之前的每一根历史 K 线都是未知。
                 "risk": 0 if code == "SH000300" else risk,
+                # 停牌没有公开来源：``constraints`` 里的 ``suspended`` 是「没有任何已声明的停牌信息」，
+                # 不是「已确认正常交易」。真正决定可交易性的是这根 K 线自己的成交量 —— 停牌日没有
+                # K 线，因此也不会被算成可交易。
                 "tradable": (
                     float(not limit.get("suspended") and (row["data"].get("volume") or 0) > 0) if limit else np.nan
                 ),
@@ -330,7 +448,10 @@ def build_generation(db, settings, run, job):
                     and streak >= 960
                     and all(
                         row["features"].get(field) is not None and math.isfinite(row["features"][field])
-                        for field in ("risk", "tradable", "limit_up", "limit_down", "daily_close")
+                        # ``risk`` 不在这里：观测日之前没有点位风险状态，历史池也一样。把它列进来会让
+                        # 分钟训练永远凑不齐一个会话。未知的风险是 NaN，由模型自己处理，并记进
+                        # ``coverage_detail.risk_state``。
+                        for field in ("tradable", "limit_up", "limit_down", "daily_close")
                     )
                 ):
                     valid_bars[day] = valid_bars.get(day, 0) + 1
@@ -351,12 +472,16 @@ def build_generation(db, settings, run, job):
         )
         if warmed:
             warmed = [str(r["time"]) for r in recent] == [str(t) for t in calendar[-minimum_bars:]]
+        risk_known = latest is not None and math.isfinite(latest["features"]["risk"])
+        # 训练接受未知的点位风险状态：公开源没有带日期的更名史，观测日之前的历史 K 线永远拿不到
+        # 状态，要求它等于要求整段历史都不许训练。推断不接受 —— 决策日当天的状态是观测得到的，
+        # 缺了就说明状态采集没跑到，那才是真的该挡住。缺口一律记进 ``coverage_detail.risk_state``。
         if (
             warmed
             and latest
             and str(latest["time"]) == expected
             and latest.get("factor")
-            and math.isfinite(latest["features"]["risk"])
+            and (risk_known or run["purpose"] == "training")
         ):
             ready.append(code)
         else:
@@ -365,11 +490,20 @@ def build_generation(db, settings, run, job):
                 if not warmed
                 else "missing_current_bar_adjustment_or_point_in_time_security_state"
             )
+    for code, records in histories.items():
+        # 观测日之前的历史 K 线没有点位风险状态。这是免令牌公开源的固有代价，不是「无风险」，
+        # 也不能因此把整只证券排除出训练 —— 参考 QuantMind 对缺列的处置：显式告警，绝不静默跳过。
+        if code != "SH000300" and records and not math.isfinite(records[-1]["features"].get("risk", np.nan)):
+            risk_uncovered.add(code)
     eligible = {
         code
         for code in codes
-        if not snapshot["instruments"].get(code, {}).get("delist_date")
-        or snapshot["instruments"][code]["delist_date"] >= str(target)
+        # 基准指数不是可交易证券，把它放进分母会虚高覆盖率，也不该出现在样本面里。
+        if code != "SH000300"
+        and (
+            not snapshot["instruments"].get(code, {}).get("delist_date")
+            or snapshot["instruments"][code]["delist_date"] >= str(target)
+        )
     }
     coverage = len(set(ready) & eligible) / len(eligible) if eligible else 0
     historical_coverage, historical_omissions = {}, {}
@@ -383,22 +517,21 @@ def build_generation(db, settings, run, job):
         coverage = min(historical_coverage.values())
         ready = sorted(set().union(*training_ready.values()))
     if coverage < snapshot["policy"]["minimum_coverage"]:
+        # 只说「覆盖率不足」会把操作者送去查采集，而真正的原因常常是某一条**特定的**排除理由占满了
+        # 全部证券。把理由分布直接写进错误里，缺口才可诊断。
+        reasons = {}
+        for reason in omitted.values():
+            reasons[reason] = reasons.get(reason, 0) + 1
+        detail = ", ".join(f"{name}={count}" for name, count in sorted(reasons.items(), key=lambda i: -i[1])[:4])
         raise PipelineBlocked(
-            f"Qlib input coverage {coverage:.1%} is below policy; inspect history and security-state coverage."
+            f"Qlib input coverage {coverage:.1%} of {len(eligible)} scoped securities is below policy "
+            f"{snapshot['policy']['minimum_coverage']:.0%}; omissions: {detail or 'none'}. "
+            "`missing_current_bar_adjustment_or_point_in_time_security_state` means no recorded risk state "
+            "reaches the decision date: public sources publish no dated rename history, so a state is only "
+            "usable from the day it was observed. `missing_daily_history_or_adjustment` means the security "
+            "has no adjusted bar in the window."
         )
     if run["purpose"] != "training":
-        protected = {
-            code
-            for portfolio in snapshot.get("portfolios", [])
-            for code, weight in portfolio["data"]["weights"].items()
-            if weight > 0
-        }
-        baselines = list(snapshot.get("portfolio_daily_baselines", {}).values())
-        if snapshot.get("daily_baseline"):
-            baselines.append(snapshot["daily_baseline"])
-        protected.update(
-            code for baseline in baselines for code, weight in baseline["data"]["weights"].items() if weight > 0
-        )
         if protected - set(ready):
             raise PipelineBlocked("Portfolio feature history unavailable: " + ", ".join(sorted(protected - set(ready))))
     generation_id = uuid4()
@@ -411,10 +544,15 @@ def build_generation(db, settings, run, job):
         "id": str(generation_id),
         "watermark": watermark,
         "as_of": str(cutoff),
-        "source": "tushare",
+        "source": "market",
         "ready": sorted(ready),
         "omitted": omitted,
         "market_coverage": coverage,
+        # 覆盖率的分母、逐项排除理由、点位风险状态与复权窗口深度。参考 QuantMind 的缺列契约：样本面
+        # 缩小时必须留下可读的告警，而不是让消费端从百分比里猜。
+        "coverage_detail": coverage_detail(
+            snapshot, scope, eligible, ready, omitted, risk_uncovered, window_sessions, len(days)
+        ),
         "days": list(map(str, days)),
         "point_in_time_pools": dated_pools,
         "engine": snapshot["engine"],

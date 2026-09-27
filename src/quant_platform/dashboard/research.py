@@ -222,7 +222,13 @@ def configurations(call, table):
 
 def experiment_panel(call, table):
     configs = configurations(call, table)
-    generations = call("GET", "/qlib-generations") or []
+    # Only pipeline-prepared generations carry frozen pools and a strategy snapshot; a scheduled
+    # daily export is not a comparable experiment input.
+    generations = [
+        row
+        for row in (call("GET", "/qlib-generations") or [])
+        if row.get("origin") != "scheduled"
+    ]
     if len(configs) >= 2 and generations:
         with st.form("compare_research"):
             generation = st.selectbox(

@@ -19,7 +19,7 @@ st.set_page_config(
     menu_items={"About": "QUAP · 知衡量化研究工作台｜授权行情 · 版本化组合 · 不执行交易"},
 )
 
-REQUIRED_ENDPOINTS = ("stock_basic", "trade_cal", "daily", "adj_factor", "rt_k")
+REQUIRED_ENDPOINTS = ("securities", "calendar", "history", "factors", "quotes")
 WORKSPACES = {name: name for name in DESCRIPTIONS}
 BOARDS = {"STAR Market": "科创板", "ChiNext": "创业板", "Main Board": "沪深主板"}
 KINDS = {"basket": "组合分析", "stock": "个股分析", "screen": "选股结果", "factor": "因子诊断", "backtest": "研究路径"}
@@ -66,6 +66,12 @@ LABELS = {
     "reference_proxy": "日内参考值",
     "missing_weight": "缺失权重",
     "eligible": "有效股票数",
+    "bucket": "分位",
+    "mean_forward": "平均未来收益",
+    "next_day": "结束交易日",
+    "holdings": "持仓数",
+    "net_return": "组合净收益",
+    "benchmark_return": "基准收益",
 }
 VALUES = {
     **BOARDS,
@@ -93,14 +99,19 @@ VALUES = {
     "research": "研究计算",
     "notify": "消息通知",
     "qlib": "Qlib 适配器",
-    "directory": "证券目录",
+    "securities": "证券目录",
     "calendar": "交易日历",
-    "daily": "日线采集",
     "factors": "复权因子",
+    "benchmark": "基准指数",
+    "constraints": "涨跌停推导",
+    "security_history": "风险状态",
     "analyze": "日终分析",
     "intraday": "盘中分析",
     "doctor": "接口诊断",
     "backup": "数据备份",
+    "qlib_export": "Qlib 导出",
+    "qlib_report": "Qlib 报告",
+    "market_report": "量化分析报告",
 }
 
 st.markdown(
@@ -211,7 +222,7 @@ if "token" not in st.session_state:
         )
     with right:
         st.subheader("登录研究工作台")
-        st.caption("仅限授权操作员访问。请使用本机 api_token，不是 Tushare 数据令牌。")
+        st.caption("仅限授权操作员访问。请使用本机 deploy/secrets/api_token，采集侧没有任何供应商令牌。")
         with st.form("login"):
             token = st.text_input("访问令牌", type="password", placeholder="请输入操作员访问令牌")
             submitted = st.form_submit_button("进入工作台", type="primary", width="stretch")
@@ -291,7 +302,7 @@ def empty(title, description):
     )
 
 
-def table(rows, *, columns=None, message="暂无记录"):
+def table(rows, *, columns=None, labels=None, message="暂无记录"):
     if not rows:
         empty(message, "数据就绪后将在此展示；不会使用演示数据填充。")
         return
@@ -305,7 +316,8 @@ def table(rows, *, columns=None, message="暂无记录"):
             frame[key] = frame[key].map(lambda value: VALUES.get(value, value))
         elif key == "healthy":
             frame[key] = frame[key].map({True: "正常", False: "心跳过期"})
-    st.dataframe(frame.rename(columns=LABELS), hide_index=True, width="stretch")
+    # `labels` overrides LABELS for a caller that reuses a field name for a different quantity.
+    st.dataframe(frame.rename(columns={**LABELS, **(labels or {})}), hide_index=True, width="stretch")
 
 
 def feedback(result, text="操作已完成"):
@@ -347,7 +359,9 @@ def operations(compact=False):
     status_ribbon(status)
     if any(item.get("status") == "blocked" for item in status.get("capabilities", [])):
         st.warning(
-            "数据源授权待确认：请检查 Tushare 令牌和接口权限，再点击「接口诊断」。受限期间不展示模拟行情。", icon="⚠️"
+            "公开数据源不可达：请检查通达信、东方财富、新浪、腾讯四源连通性，再点击「接口诊断」。"
+            "受限期间不展示模拟行情。",
+            icon="⚠️",
         )
     elif status["data_health"] != "fresh":
         st.warning("行情数据覆盖不足或已过期。服务在线不代表行情实时有效；非交易时段也可能出现此提示。", icon="⚠️")

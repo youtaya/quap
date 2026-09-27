@@ -2323,6 +2323,18 @@ wheels = [
 ]
 
 [[package]]
+name = "pytdx"
+version = "1.72"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "click" },
+    { name = "cryptography" },
+    { name = "pandas" },
+    { name = "six" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/26/64/588bd37a7f531f8e059ad5357126b2cfbc3e99ae82551aee3589196031d0/pytdx-1.72.tar.gz", hash = "sha256:91ccac0919cc28a9f8c4aee19d770fab06d38da9503148dfe78bdc200706afad", size = 80432, upload-time = "2019-08-26T06:36:20.166Z" }
+
+[[package]]
 name = "pytest"
 version = "9.1.1"
 source = { registry = "https://pypi.org/simple" }
@@ -2828,6 +2840,7 @@ dependencies = [
     { name = "pandas" },
     { name = "psycopg", extra = ["binary", "pool"] },
     { name = "pydantic-settings" },
+    { name = "pytdx" },
     { name = "pyyaml" },
     { name = "sqlalchemy" },
     { name = "streamlit" },
@@ -2869,6 +2882,7 @@ requires-dist = [
     { name = "psycopg", extras = ["binary", "pool"], specifier = ">=3.2,<4" },
     { name = "pydantic-settings", specifier = ">=2.8,<3" },
     { name = "pyqlib", marker = "extra == 'qlib'", specifier = "==0.9.7" },
+    { name = "pytdx", specifier = ">=1.72,<2" },
     { name = "pyyaml", specifier = ">=6,<7" },
     { name = "sqlalchemy", specifier = ">=2.0,<3" },
     { name = "streamlit", specifier = ">=1.52,<2" },

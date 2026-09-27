@@ -326,7 +326,7 @@ def test_research_child_secret_isolation_bounds_and_cleanup(monkeypatch, outcome
     from quant_platform.research import process
     from quant_platform.storage import LostLease
 
-    for key in ("QUANT_DATABASE_URL", "QUANT_API_TOKEN", "QUANT_TUSHARE_TOKEN", "HTTPS_PROXY", "PYTHONPATH"):
+    for key in ("QUANT_DATABASE_URL", "QUANT_API_TOKEN", "HTTPS_PROXY", "PYTHONPATH"):
         monkeypatch.setenv(key, "fixture-secret-must-not-leak")
     killed, waited = [], []
     running = outcome in {"deadline", "cancel", "logs"}

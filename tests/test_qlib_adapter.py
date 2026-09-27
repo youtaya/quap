@@ -41,9 +41,32 @@ def test_two_real_generations_and_reader_failure_isolation(tmp_path, history_row
         store.build({"SH600895": revised}, days)
     assert store.current().name == second
     assert not list(store.root.glob("staging-*"))
-    from quant_platform.analysis import indicators
 
-    assert indicators(history_rows)["status"] == "complete"
+
+def test_generation_trims_each_security_to_its_adjusted_suffix(tmp_path, history_rows, monkeypatch):
+    """公开源的前复权序列比日 K 浅，所以更早的那一段没有因子。
+
+    整体丢弃这只证券会把「因子从某天起才可用」误判成「这只证券不可用」；未复权价也绝不能混进
+    训练集。正确做法是按从新到旧的最长连续已复权区间截取，并把截掉的会话数写进 manifest。
+    """
+    from quant_platform.adapters.qlib import export as export_module
+
+    monkeypatch.setattr(export_module, "isolated_read", lambda path, code=None: {"rows": []})
+    store = export_module.GenerationStore(tmp_path)
+    days = [r["day"] for r in history_rows]
+    partial = deepcopy(history_rows)
+    for item in partial[:40]:
+        item["factor"] = None
+    with store.lock:
+        stage, _, manifest = store.build({"SH600895": partial}, days)
+    assert manifest["coverage"]["SH600895"] == str(days[-1])
+    assert manifest["trimmed_unadjusted"] == {"SH600895": 40}
+    assert (stage / "instruments" / "all.txt").read_text().strip() == f"SH600895\t{days[40]}\t{days[-1]}"
+
+    with store.lock:
+        _, _, whole = store.build({"SH600895": history_rows}, days)
+    assert whole["trimmed_unadjusted"] == {}
+    assert whole["coverage"]["SH600895"] == str(days[-1])
 
 
 def test_external_universe_requires_dated_membership(tmp_path):

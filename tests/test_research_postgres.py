@@ -261,7 +261,7 @@ def comparison_fixture(db, settings, tmp_path):
     folder.mkdir(parents=True)
     (folder / "fixture.bin").write_bytes(b"durability-fixture-not-qlib-data")
     days = [(datetime(2024, 1, 1) + timedelta(days=i)).date().isoformat() for i in range(180)]
-    manifest = seal(folder, {"source": "tushare", "days": days, "market_coverage": 1, "fixture": True})
+    manifest = seal(folder, {"source": "market", "days": days, "market_coverage": 1, "fixture": True})
     with db.transaction() as conn:
         conn.execute(
             "INSERT INTO qlib_generations(id,frequency,watermark,as_of,contract,path,manifest) "

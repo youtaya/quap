@@ -9,17 +9,24 @@ from quant_platform.storage import jsonb
 from quant_platform.storage.baskets import Conflict
 
 DAILY_CAPABILITIES = {
-    "stock_basic",
-    "trade_cal",
-    "daily",
-    "adj_factor",
-    "index_daily",
-    "namechange",
-    "stk_limit",
-    "suspend_d",
+    "securities",
+    "calendar",
+    "history",
+    "factors",
+    "benchmark",
+    "security_history",
+    "constraints",
 }
-MINUTE_CAPABILITIES = {"stk_mins", "rt_min", "rt_min_daily"}
-DAILY_DATASETS = {"stock_basic", "trade_cal", "daily", "adj_factor", "index_daily", "namechange", "constraints"}
+MINUTE_CAPABILITIES = {"minutes"}
+DAILY_DATASETS = {
+    "securities",
+    "calendar",
+    "history",
+    "factors",
+    "benchmark",
+    "security_history",
+    "constraints",
+}
 VALID_REPORT = (
     "r.state='published' AND r.available_at<=now() AND r.valid_until>now() "
     "AND m.state='active' AND m.expires_at>now() AND e.passed "
@@ -78,7 +85,16 @@ def readiness(db, settings):
     for freq, role in (("day", "qlib-daily"), ("5min", "qlib-intraday")):
         required = DAILY_CAPABILITIES | (MINUTE_CAPABILITIES if freq == "5min" else set())
         missing = sorted(required - available)
-        blockers = ["permissions: " + ", ".join(missing)] if missing else []
+        # 「permissions」是旧令牌供应商的措辞；免令牌公开源没有权限可授，缺的是一次成功的真实
+        # 采集（`Market._qualify` 据此置位 `schema_verified`）。
+        blockers = ["unverified capabilities: " + ", ".join(missing)] if missing else []
+        # 采集范围是**配置**，不是数据缺陷，所以它单列一条，而不是躲在覆盖门禁后面。生产验收要求
+        # 全市场 ≥95% 覆盖；`index` 范围只采成分股与观察篮子，本就不满足这一条，必须说出来。
+        if settings.history_scope != "all":
+            blockers.append(
+                f"history scope is '{settings.history_scope}'; production acceptance requires "
+                "QUANT_HISTORY_SCOPE=all with at least 95% full-market daily coverage"
+            )
         if role not in roles or "qlib-data" not in roles:
             blockers.append("required Qlib workers unavailable")
         if models[freq] is None:
@@ -96,6 +112,7 @@ def readiness(db, settings):
         "capabilities": capabilities,
         "generations": generations,
         "history_sessions": settings.history_sessions,
+        "factor_sessions": settings.factor_sessions,
         "minute_history_sessions": settings.minute_history_sessions,
         "pool_capacity": settings.intraday_pool_capacity,
         "research_minutes": db.setting("research_minute_readiness", {"ready": False, "reason": "Not scheduled yet."}),
@@ -181,15 +198,29 @@ def create_run(db, settings, request):
         if request.portfolio_id and not portfolios:
             raise Conflict("No effective model-portfolio baseline at this cutoff.")
         watchlist = conn.execute("SELECT * FROM watchlist_revisions ORDER BY revision DESC LIMIT 1").fetchone()
+        # 训练宇宙必须**等于平台声明的采集范围**。两者不一致时，`minimum_coverage`（下限 0.95）的
+        # 分母是「全部上市证券」而分子只可能来自已采集的那一小撮：默认 `index` 范围下上限约 5%，
+        # 无论数据多好都过不去。这和之前那个「能力门禁结构性不可满足」是同一类缺陷 —— 门禁测的不
+        # 是数据，而是配置。`history_scope=all` 时范围就是全市场，语义不变。
+        from quant_platform.jobs.collect import scoped_codes_on
+
+        scoped = scoped_codes_on(conn, settings, cutoff.astimezone(CN).date())
+        if not scoped:
+            raise PipelineBlocked("No scoped securities; check index membership and the security master.")
         instruments = conn.execute(
-            "SELECT * FROM instruments WHERE list_date<=%s AND (%s OR delist_date IS NULL OR delist_date>=%s)",
-            (cutoff.astimezone(CN).date(), request.purpose == "training", cutoff.astimezone(CN).date()),
+            "SELECT * FROM instruments WHERE symbol=ANY(%s) AND (list_date IS NULL OR list_date<=%s) "
+            "AND (%s OR delist_date IS NULL OR delist_date>=%s)",
+            (
+                sorted(scoped),
+                cutoff.astimezone(CN).date(),
+                request.purpose == "training",
+                cutoff.astimezone(CN).date(),
+            ),
         ).fetchall()
         daily = None
         portfolio_daily = {}
         if request.frequency == "5min":
-            daily = conn.execute(
-                "SELECT r.*,p.model_id,p.data AS prediction FROM recommendations r "
+            daily = conn.execute(                "SELECT r.*,p.model_id,p.data AS prediction FROM recommendations r "
                 "JOIN prediction_runs p ON p.id=r.prediction_id JOIN model_versions m ON m.id=p.model_id "
                 "WHERE r.frequency='day' AND r.portfolio_id IS NULL AND r.state='published' "
                 "AND r.available_at<=%s AND r.valid_until>%s AND m.state='active' AND m.expires_at>now() "
@@ -218,6 +249,10 @@ def create_run(db, settings, request):
             "portfolios": portfolios,
             "watchlist": watchlist,
             "instruments": {r["symbol"]: r for r in instruments},
+            # 采集范围的**模式**要跟范围一起冻结：代次 manifest 里的 `coverage_detail.scope_mode` 只有
+            # 拿到它才能说清「298 是这个模式的全部，不是全市场的一角」。范围本身已经由
+            # `scoped_codes_on` 决定（见上），这里只是把它为什么是这些证券记下来。
+            "scope_mode": settings.history_scope,
             "daily_baseline": daily,
             "portfolio_daily_baselines": portfolio_daily,
             "history_sessions": settings.history_sessions,

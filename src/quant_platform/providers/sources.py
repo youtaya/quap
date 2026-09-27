@@ -8,11 +8,11 @@ import json
 import random
 import re
 import time
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 
 import httpx
 
-from quant_platform.domain import number, symbol
+from quant_platform.domain import CN, number, symbol
 from . import Deferred, PermissionDenied, ProviderError, positive
 
 USER_AGENT = (
@@ -22,6 +22,14 @@ USER_AGENT = (
 BYTE_LIMIT = 8 * 1024 * 1024
 REQUEST_DEADLINE = 60
 LOT = 100
+# Index identities the platform tracks: the two exchange composites and the CSI 300 benchmark.
+INDEX_CODES = {"SH000001", "SZ399001", "SH000300"}
+# Public 通达信 (TDX) quote servers. Only reachability is assumed; no vendor token exists.
+TDX_HOSTS = (
+    ("119.147.212.81", 7709),
+    ("218.108.98.244", 7709),
+    ("123.125.108.24", 7709),
+)
 
 
 class Transport:
@@ -82,8 +90,8 @@ def _secid(code):
 
 
 def symbol_or_index(code):
-    """Accept A-share identities and the two index identities the platform uses."""
-    if isinstance(code, str) and code.upper() in {"SH000001", "SH000300"}:
+    """Accept A-share identities and the three index identities the platform uses."""
+    if isinstance(code, str) and code.upper() in INDEX_CODES:
         return code.upper()
     return symbol(code)
 
@@ -122,8 +130,14 @@ class EastMoney:
     name = "eastmoney"
     kline_url = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
     list_url = "https://push2.eastmoney.com/api/qt/clist/get"
+    quote_url = "https://push2.eastmoney.com/api/qt/ulist.np/get"
+    # 与 `list_url` 不同的主机：`push2` 被网络边缘拒绝时这台仍然应答，上市日期的兜底走这里。
+    org_url = "https://datacenter-web.eastmoney.com/api/data/v1/get"
     referer = "https://quote.eastmoney.com/"
     A_SHARE_FILTER = "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23"
+    CSI300_FILTER = "b:BK0500"
+    # fqt: 0 不复权, 1 前复权 (qfq), 2 后复权 (hfq)
+    RAW, QFQ, HFQ = 0, 1, 2
 
     def __init__(self, transport):
         self.transport = transport
@@ -153,10 +167,10 @@ class EastMoney:
             rows.append(parts)
         return rows
 
-    def daily(self, code, start, end, adjusted=False, limit=4000):
+    def daily(self, code, start, end, fqt=RAW, limit=4000):
         code = symbol_or_index(code)
         rows = []
-        for parts in self._kline(code, 101, 2 if adjusted else 0, start, end, limit):
+        for parts in self._kline(code, 101, fqt, start, end, limit):
             day = datetime.strptime(parts[0], "%Y-%m-%d").date()
             bar = _bar(code, day, parts[1], parts[2], parts[3], parts[4], positive(parts[5], LOT), positive(parts[6]))
             change = number(parts[9]) if len(parts) > 9 else None
@@ -164,6 +178,54 @@ class EastMoney:
                 bar["pre_close"] = round(bar["close"] - change, 4)
             rows.append(bar)
         return fill_pre_close(rows)
+
+    def daily_pair(self, code, start, end, limit=4000):
+        """Raw bars plus 前复权 closes; the close ratio is this source's adjustment factor."""
+        bars = self.daily(code, start, end, self.RAW, limit)
+        qfq = {row["day"]: row["close"] for row in self.daily(code, start, end, self.QFQ, limit)}
+        return bars, qfq
+
+    def quotes(self, codes):
+        """Realtime rows; ``f124`` is the source's own epoch stamp, never a locally inferred date."""
+        codes = [symbol(code) for code in codes]
+        params = {
+            "fltt": "2",
+            "invt": "2",
+            "fields": "f12,f13,f14,f2,f15,f16,f17,f18,f5,f6,f124",
+            "secids": ",".join(_secid(code) for code in codes),
+        }
+        payload = _json(self.transport.get(self.quote_url, params, self.referer))
+        data = payload.get("data") if isinstance(payload, dict) else None
+        if payload.get("rc") != 0 or not isinstance(data, dict):
+            raise ProviderError("Eastmoney quote envelope changed or request rejected.")
+        items = data.get("diff")
+        if isinstance(items, dict):
+            items = list(items.values())
+        rows = []
+        for item in items or []:
+            try:
+                code = symbol(("SH" if item.get("f13") == 1 else "SZ") + str(item.get("f12")))
+            except ValueError:
+                continue
+            stamp = number(item.get("f124"))
+            moment = (
+                datetime.fromtimestamp(stamp, tz=CN).strftime("%Y-%m-%d %H:%M:%S") if stamp and stamp > 0 else None
+            )
+            rows.append(
+                {
+                    "code": code,
+                    "name": str(item.get("f14") or ""),
+                    "open": number(item.get("f17")),
+                    "high": number(item.get("f15")),
+                    "low": number(item.get("f16")),
+                    "close": number(item.get("f2")),
+                    "pre_close": number(item.get("f18")),
+                    "volume": positive(item.get("f5"), LOT),
+                    "turnover": positive(item.get("f6")),
+                    "trade_time": moment,
+                }
+            )
+        return rows
 
     def minutes(self, code, start, end, limit=4000):
         code = symbol(code)
@@ -222,6 +284,65 @@ class EastMoney:
             )
         return rows, int(data.get("total") or 0)
 
+    def listing_dates(self, page, size=5000):
+        """Point-in-time listing dates, from a host that is not the one the security master uses.
+
+        ``push2`` (``list_url``) is refused at the network edge on some networks while every other
+        Eastmoney host keeps answering. The security master therefore publishes without a single
+        listing date, and ``list_date <= day`` — the filter that decides whether a security was
+        tradeable on a given session — silently degrades to "unknown means listed". That is a
+        look-ahead bias in every backtest, so the dates are read from the data-centre host instead
+        of being given up on. Returns bare 6-digit codes; the exchange prefix belongs to the domain
+        layer, which is the only place that knows how to build a symbol.
+        """
+        params = {
+            "reportName": "RPT_F10_BASIC_ORGINFO",
+            "columns": "SECURITY_CODE,LISTING_DATE",
+            "pageSize": str(size),
+            "pageNumber": str(page),
+            "sortColumns": "SECURITY_CODE",
+            "sortTypes": "1",
+        }
+        payload = _json(self.transport.get(self.org_url, params, self.referer))
+        result = payload.get("result") if isinstance(payload, dict) else None
+        if not payload.get("success") or not isinstance(result, dict):
+            raise ProviderError("Eastmoney listing-date envelope changed or request rejected.")
+        rows = {}
+        for item in result.get("data") or []:
+            code, listed = str(item.get("SECURITY_CODE") or ""), item.get("LISTING_DATE")
+            if not code or not listed:
+                continue
+            try:
+                rows[code] = datetime.strptime(str(listed)[:10], "%Y-%m-%d").date()
+            except ValueError:
+                continue
+        return rows, int(result.get("count") or 0)
+
+    def constituents(self, page, size=100, board=None):
+        """Current CSI 300 membership. Public listings carry no dated constituent history."""
+        params = {
+            "pn": str(page),
+            "pz": str(size),
+            "po": "1",
+            "np": "1",
+            "fltt": "2",
+            "invt": "2",
+            "fid": "f12",
+            "fs": board or self.CSI300_FILTER,
+            "fields": "f12,f13,f14",
+        }
+        payload = _json(self.transport.get(self.list_url, params, self.referer))
+        data = payload.get("data") if isinstance(payload, dict) else None
+        if payload.get("rc") != 0 or not isinstance(data, dict):
+            raise ProviderError("Eastmoney constituent envelope changed or request rejected.")
+        rows = []
+        for item in data.get("diff") or []:
+            try:
+                rows.append(symbol(("SH" if item.get("f13") == 1 else "SZ") + str(item.get("f12"))))
+            except ValueError:
+                continue
+        return rows, int(data.get("total") or 0)
+
 
 class Tencent:
     name = "tencent"
@@ -262,19 +383,18 @@ class Tencent:
             )
         return rows
 
-    def daily(self, code, start, end, adjusted=False, limit=2000):
+    def daily(self, code, start, end, fq="", limit=2000):
         code = symbol_or_index(code)
-        kind = "hfq" if adjusted else ""
         param = ",".join(
-            [_lower(code), "day", start.isoformat() if start else "", end.isoformat() if end else "", str(min(limit, 2000)), kind]
+            [_lower(code), "day", start.isoformat() if start else "", end.isoformat() if end else "", str(min(limit, 2000)), fq]
         )
         payload = _json(self.transport.get(self.kline_url, {"param": param}, self.referer))
         data = (payload.get("data") or {}).get(_lower(code)) if isinstance(payload, dict) else None
         if payload.get("code") != 0 or not isinstance(data, dict):
             raise ProviderError("Tencent kline envelope changed or request rejected.")
-        series = data.get("hfqday" if adjusted else "day")
+        series = data.get(f"{fq}day" if fq else "day")
         if series is None:
-            series = data.get("qfqday") if not adjusted else None
+            series = data.get("day")
         if not isinstance(series, list):
             raise ProviderError("Tencent kline series missing.")
         rows = []
@@ -284,6 +404,13 @@ class Tencent:
             day = datetime.strptime(item[0], "%Y-%m-%d").date()
             rows.append(_bar(code, day, item[1], item[2], item[3], item[4], positive(item[5], LOT), None))
         return fill_pre_close(rows)
+
+    def daily_pair(self, code, start, end, limit=2000):
+        bars = self.daily(code, start, end, "", limit)
+        # 前复权序列另有服务端上限：count 超过 800 时返回的行数反而更少（实测 2000 只回 640 行），
+        # 所以复权一侧按 800 请求，才能拿到源实际能给出的最深一档。
+        qfq = {row["day"]: row["close"] for row in self.daily(code, start, end, "qfq", min(limit, 800))}
+        return bars, qfq
 
     def minutes(self, code, limit=320):
         code = symbol(code)
@@ -318,7 +445,7 @@ class Sina:
     quote_url = "https://hq.sinajs.cn/list="
     kline_url = "https://quotes.sina.cn/cn/api/json_v2.php/CN_MarketDataService.getKLineData"
     list_url = "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeData"
-    factor_url = "https://finance.sina.com.cn/realstock/company/{code}/hfq.js"
+    count_url = "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeStockCount"
     referer = "https://finance.sina.com.cn/"
 
     def __init__(self, transport):
@@ -401,30 +528,14 @@ class Sina:
             )
         return rows
 
-    def factors(self, code):
-        """Sparse cumulative adjustment factors keyed by ex-date; 1.0 applies before the first event."""
-        code = symbol(code)
-        text = self.transport.get(self.factor_url.format(code=_lower(code)), None, self.referer).decode(
-            "utf-8", errors="replace"
-        )
-        marker = text.find("{")
-        if marker < 0:
-            raise ProviderError("Sina factor script changed.")
-        try:
-            payload, _ = json.JSONDecoder().raw_decode(text[marker:])
-        except ValueError:
-            raise ProviderError("Sina factor script is malformed.") from None
-        events = []
-        for item in payload.get("data") or []:
-            factor = number(item.get("f"))
-            if factor is None or factor <= 0:
-                raise ProviderError("Sina factor value invalid.")
-            events.append((datetime.strptime(item["d"], "%Y-%m-%d").date(), factor))
-        events.sort()
-        return events
+    def directory_page(self, page, size=100, node="sh_a"):
+        """One page of an exchange-specific A-share list.
 
-    def directory_page(self, page, size=100):
-        params = {"page": str(page), "num": str(size), "sort": "symbol", "asc": "1", "node": "hs_a"}
+        ``node`` is deliberately ``sh_a``/``sz_a`` rather than ``hs_a``: the combined node also carries
+        北交所 identities, and sorting it by ``symbol`` puts every ``bj`` row on page one, where the
+        platform's ``symbol()`` filter drops them all and the page looks truncated.
+        """
+        params = {"page": str(page), "num": str(size), "sort": "symbol", "asc": "1", "node": node}
         payload = _json(self.transport.get(self.list_url, params, self.referer))
         if payload is None:
             return [], None
@@ -448,16 +559,231 @@ class Sina:
             )
         return rows, None
 
+    def directory_count(self, node="sh_a"):
+        """Exchange-specific listed count; ``None`` when the count endpoint is unavailable."""
+        payload = _json(self.transport.get(self.count_url, {"node": node}, self.referer))
+        return number(payload) if not isinstance(payload, (list, dict)) else None
 
-def factor_on(events, day):
-    """Cumulative factor effective on ``day`` given sorted (ex_date, factor) events."""
-    current = 1.0
-    for event_day, factor in events:
-        if event_day <= day:
-            current = factor
-        else:
-            break
-    return current
+
+class Tdx:
+    """通达信公开行情服务器（pytdx）。连接或字段不可用即抛错，交给下一源。
+
+    ``pytdx`` 是可选依赖：导入失败时本源直接不可用。日线 ``vol`` 按手（×100 股）、
+    ``amount`` 按人民币换算，换算常数由夹具测试锁定。实时行情只在服务器给出完整
+    日期时间时才被平台接受，否则按字段不合法降级到下一源。
+    """
+
+    name = "pytdx"
+    LOT = 100
+    PAGE = 1000
+
+    def __init__(self, client=None, hosts=TDX_HOSTS):
+        self._client = client
+        self.hosts = tuple(hosts)
+        self.api = None
+
+    def _session(self):
+        if self.api is not None:
+            return self.api
+        if self._client is not None:
+            self.api = self._client
+            return self.api
+        try:
+            from pytdx.hq import TdxHq_API
+        except ImportError:
+            raise ProviderError("通达信 client is unavailable.") from None
+        try:
+            api = TdxHq_API(heartbeat=False, auto_retry=False)
+        except Exception as exc:  # noqa: BLE001 - a client that cannot be built is simply unavailable
+            raise ProviderError("通达信 client could not be built (%s)." % type(exc).__name__) from exc
+        for host, port in self.hosts:
+            try:
+                if api.connect(host, port, time_out=5):
+                    self.api = api
+                    return api
+            except Exception:  # noqa: BLE001 - pytdx raises its own tree (ResponseHeaderRecvFails, ...)
+                continue
+        raise ProviderError("No 通达信 quote server is reachable.")
+
+    @staticmethod
+    def _guard(call, message):
+        """Run one pytdx call, converting its private exception tree into a degradation signal.
+
+        ``pytdx`` raises ``TdxException`` subclasses (``ResponseHeaderRecvFails`` and friends) that are
+        unrelated to ``OSError``; if they escape they bypass ``Market._degrade`` and abort the whole
+        capability instead of falling through to the next source.
+        """
+        try:
+            return call()
+        except ProviderError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - any client failure must degrade, never escape
+            raise ProviderError("%s (%s)." % (message, type(exc).__name__)) from exc
+
+    def close(self):
+        if self._client is None and self.api is not None:
+            try:
+                self.api.disconnect()
+            except Exception:  # noqa: BLE001 - a dead socket must not mask the real error
+                pass
+        self.api = None
+
+    @staticmethod
+    def params():
+        try:
+            from pytdx.params import TDXParams
+        except ImportError:
+            # 通达信 是可选依赖：缺失时本源整体不可用，按降级顺序换下一源。
+            raise ProviderError("通达信 client is unavailable.") from None
+
+        return TDXParams
+
+    def _market(self, code):
+        return self.params().MARKET_SH if code.startswith("SH") else self.params().MARKET_SZ
+
+    @staticmethod
+    def _stamp(row):
+        if row.get("datetime"):
+            return str(row["datetime"])[:19]
+        try:
+            return f"{int(row['year']):04d}-{int(row['month']):02d}-{int(row['day']):02d}"
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    def _bars(self, code, category, count):
+        code = symbol_or_index(code)
+        api = self._session()
+        fetch = api.get_index_bars if code in INDEX_CODES else api.get_security_bars
+        rows = (
+            self._guard(
+                lambda: fetch(category, self._market(code), code[2:], 0, int(count)),
+                "通达信 bar request failed",
+            )
+            or []
+        )
+        parsed = []
+        for row in rows:
+            stamp = self._stamp(row)
+            if stamp is None:
+                raise ProviderError("通达信 bar is missing a source timestamp.")
+            parsed.append({**row, "code": code, "stamp": stamp})
+        return parsed
+
+    def daily(self, code, start=None, end=None, limit=800):
+        rows = []
+        for row in self._bars(code, self.params().KLINE_TYPE_RI_K, min(limit, 800)):
+            try:
+                day = datetime.strptime(row["stamp"][:10], "%Y-%m-%d").date()
+            except ValueError:
+                raise ProviderError("通达信 trading date is invalid.") from None
+            if start and day < start or end and day > end:
+                continue
+            rows.append(
+                _bar(
+                    row["code"],
+                    day,
+                    row.get("open"),
+                    row.get("close"),
+                    row.get("high"),
+                    row.get("low"),
+                    positive(row.get("vol"), self.LOT),
+                    positive(row.get("amount")),
+                )
+            )
+        return fill_pre_close(rows)
+
+    def minutes(self, code, limit=800):
+        code = symbol_or_index(code)
+        rows = []
+        for row in self._bars(code, self.params().KLINE_TYPE_5MIN, min(limit, 800)):
+            try:
+                stamp = datetime.strptime(row["stamp"], "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                raise ProviderError("通达信 minute timestamp is invalid.") from None
+            rows.append(
+                {
+                    "code": code,
+                    "time": stamp.strftime("%Y-%m-%d %H:%M:%S"),
+                    "open": number(row.get("open")),
+                    "close": number(row.get("close")),
+                    "high": number(row.get("high")),
+                    "low": number(row.get("low")),
+                    "volume": positive(row.get("vol"), self.LOT),
+                    "turnover": positive(row.get("amount")),
+                }
+            )
+        return rows
+
+    def quotes(self, codes):
+        codes = [symbol(code) for code in codes]
+        api = self._session()
+        requested = [(self._market(code), code[2:]) for code in codes]
+        rows = (
+            self._guard(lambda: api.get_security_quotes(requested), "通达信 quote request failed") or []
+        )
+        parsed = []
+        for row in rows:
+            code = symbol(("SH" if row.get("market") == self.params().MARKET_SH else "SZ") + str(row.get("code")))
+            stamp = str(row.get("servertime") or "")
+            parsed.append(
+                {
+                    "code": code,
+                    "name": "",
+                    "open": number(row.get("open")),
+                    "high": number(row.get("high")),
+                    "low": number(row.get("low")),
+                    "close": number(row.get("price")),
+                    "pre_close": number(row.get("last_close")),
+                    "volume": positive(row.get("vol"), self.LOT),
+                    "turnover": positive(row.get("amount")),
+                    # The public server returns a bare clock time; the platform never infers a date.
+                    "trade_time": stamp if re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", stamp) else None,
+                }
+            )
+        return parsed
+
+    def directory(self, market):
+        api = self._session()
+        count = self._guard(lambda: api.get_security_count(market), "通达信 count request failed") or 0
+        rows = []
+        for start in range(0, int(count), self.PAGE):
+            rows.extend(
+                self._guard(
+                    lambda start=start: api.get_security_list(market, start),
+                    "通达信 list request failed",
+                )
+                or []
+            )
+        parsed = []
+        for row in rows:
+            try:
+                code = symbol(("SH" if market == self.params().MARKET_SH else "SZ") + str(row.get("code")))
+            except ValueError:
+                continue
+            parsed.append(
+                {
+                    "code": code,
+                    "name": str(row.get("name") or "").strip(),
+                    "exchange": "SSE" if code.startswith("SH") else "SZSE",
+                    "list_status": "L",
+                    "list_date": None,
+                    "delist_date": None,
+                }
+            )
+        return parsed
+
+
+def factor_ratio(raw, qfq):
+    """Cumulative adjustment factor ``qfq / raw`` per day; unusable pairs stay absent."""
+    factors = {}
+    for day, price in raw.items():
+        adjusted = qfq.get(day)
+        if not price or adjusted is None:
+            continue
+        factor = number(adjusted) / number(price) if number(price) else None
+        if factor and factor > 0:
+            factors[day] = factor
+    return factors
 
 
 def date_chunks(start, end, days=1400):
@@ -470,12 +796,15 @@ def date_chunks(start, end, days=1400):
 
 
 __all__ = [
+    "INDEX_CODES",
+    "TDX_HOSTS",
     "EastMoney",
-    "Tencent",
     "Sina",
+    "Tdx",
+    "Tencent",
     "Transport",
     "date_chunks",
-    "factor_on",
+    "factor_ratio",
     "fill_pre_close",
     "symbol_or_index",
 ]

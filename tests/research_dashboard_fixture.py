@@ -13,6 +13,64 @@ def identifier(number):
     return str(UUID(int=number))
 
 
+QUANTILES = [
+    {"bucket": 0, "count": 240, "mean_forward": -0.0100},
+    {"bucket": 1, "count": 240, "mean_forward": -0.0020},
+    {"bucket": 2, "count": 240, "mean_forward": 0.0030},
+    {"bucket": 3, "count": 240, "mean_forward": 0.0080},
+    {"bucket": 4, "count": 240, "mean_forward": 0.0150},
+]
+BOOK = {
+    "status": "complete",
+    "rebalances": 3,
+    "cumulative_return": 0.1200,
+    "benchmark_cumulative_return": 0.0500,
+    "relative_return": 0.0700,
+    "mean_turnover": 0.3000,
+}
+# Mirrors the shape returned by GET /qlib-report; descriptive evidence only, never a recommendation.
+QLIB_REPORT_FIXTURE = {
+    "report": {
+        "as_of": "2026-01-05",
+        "generation": "generation-" + "a" * 32,
+        "samples": 1200,
+        "ic": 0.0500,
+        "rank_ic": 0.0700,
+        "daily_ic": {"mean": 0.0400, "sessions": 40, "positive_ratio": 0.6},
+        "quantiles": QUANTILES,
+        "book": {
+            **BOOK,
+            "periods": [
+                {
+                    "day": "2025-12-08",
+                    "next_day": "2026-01-05",
+                    "holdings": 30,
+                    "gross_return": 0.0310,
+                    "cost": 0.0010,
+                    "net_return": 0.0300,
+                    "benchmark_return": 0.0100,
+                    "turnover": 0.3000,
+                }
+            ],
+        },
+        "markdown": "# Qlib 研究报告 · 2026-01-05",
+    },
+    "markdown": "# Qlib 研究报告 · 2026-01-05",
+    "report_id": 7,
+    "as_of": "2026-01-05",
+    "target": "SH000300",
+    "engine": "qlib-0.9.7:qlib-report-1",
+    "summary": {
+        "samples": 1200,
+        "ic": 0.0500,
+        "rank_ic": 0.0700,
+        "daily_ic": {"mean": 0.0400, "sessions": 40, "positive_ratio": 0.6},
+        "quantiles": QUANTILES,
+        "book": BOOK,
+    },
+}
+
+
 def fixture_call(method, path, body=None):
     route = urlsplit(path).path
     state = st.session_state.setdefault(
@@ -79,7 +137,7 @@ def fixture_call(method, path, body=None):
                 }
             ],
             "collection_enabled": True,
-            "production_source": "tushare",
+            "production_source": "market",
         }
     if route == "/factors/inventory":
         from quant_platform.storage.experiments import inventory
@@ -147,6 +205,8 @@ def fixture_call(method, path, body=None):
         }
     if route == "/qlib-generations":
         return [{"id": identifier(1), "frequency": "day", "fixture_only": True}]
+    if route == "/qlib-report":
+        return QLIB_REPORT_FIXTURE
     if route == "/data-readiness":
         return {
             "frequencies": {
@@ -168,9 +228,9 @@ def fixture_app():
     st.warning("FIXTURE ONLY — in-memory UI demonstration. No external data, database, Qlib training, or orders.")
     if notice := st.session_state.pop("notice", None):
         st.success(notice)
-    page = st.sidebar.radio("Workspace", list(WORKSPACES), index=5)
+    page = st.sidebar.radio("Workspace", list(WORKSPACES), index=list(WORKSPACES).index("Data & Pipeline"))
 
-    def table(rows, columns=None):
+    def table(rows, columns=None, labels=None):
         if rows:
             st.dataframe(rows, width="stretch")
 

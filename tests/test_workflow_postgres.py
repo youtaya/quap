@@ -28,6 +28,9 @@ def seed(db):
             (day - timedelta(days=500),),
         )
         db.set_setting(conn, "analysis_target", str(day - timedelta(days=1)))
+        # `create_run` 的训练宇宙等于采集范围（默认 `index` = 成分股 ∪ 观察篮子），所以夹具必须声明
+        # 成分，否则范围为空、连运行都建不出来 —— 这正是范围没对齐时该有的行为。
+        db.set_setting(conn, "index_members", {"index": "SH000300", "symbols": ["SH600000"], "dated": False})
     return day
 
 
@@ -655,6 +658,8 @@ def test_intraday_acceptance_and_reads_recheck_daily_release(db, settings):
 def scheduled_sources(db, settings):
     day = seed(db)
     settings.history_sessions = 120
+    # 已复权窗口是独立的一项准入要求；这个夹具让因子与日 K 同深，所以两项都按 120 会话满足。
+    settings.factor_sessions = 120
     settings.minute_history_sessions = 20
     target = day - timedelta(days=1)
     with db.transaction() as conn:
@@ -664,11 +669,11 @@ def scheduled_sources(db, settings):
                 conn.execute(
                     "INSERT INTO calendars VALUES(%s,%s,true,now()) ON CONFLICT DO NOTHING", (exchange, source_day)
                 )
-            for endpoint in ("daily", "adj_factor", "constraints"):
+            for endpoint in ("history", "factors", "constraints"):
                 db.dataset(conn, endpoint, str(source_day), [{"day": str(source_day)}], {})
-        did = db.dataset(conn, "index_daily", "SH000300", [{"day": str(target)}], {})
+        did = db.dataset(conn, "benchmark", "SH000300", [{"day": str(target)}], {})
         conn.execute("INSERT INTO daily_bars VALUES('SH000300',%s,%s,'{}')", (target, did))
-        did = db.dataset(conn, "namechange", "SH600000", [{"start": str(target)}], {})
+        did = db.dataset(conn, "security_history", "SH600000", [{"start": str(target)}], {})
         conn.execute("INSERT INTO security_states VALUES('SH600000',%s,%s,now(),'{}')", (target, did))
     return day
 
@@ -679,7 +684,7 @@ def test_scheduler_uses_scoped_sources_and_reacts_to_release_changes(db, setting
     day = scheduled_sources(db, settings)
     at = datetime.combine(day, time(8), CN)
     with db.transaction() as conn:
-        jid = db.enqueue(conn, "daily", "history", "obsolete-failure", {"day": "2000-01-01"})
+        jid = db.enqueue(conn, "history", "history", "obsolete-failure", {"end": "2000-01-01"})
         conn.execute("UPDATE jobs SET status='failed' WHERE id=%s", (jid,))
     schedule_qlib(db, settings, at)
     assert len(db.rows("SELECT * FROM pipeline_runs WHERE frequency='day'")) == 2
@@ -801,7 +806,7 @@ def test_scheduler_periodic_training_reuses_requests_and_recovers_changed_inputs
     day = scheduled_sources(db, settings)
     at = datetime.combine(day, time(8), CN)
     with db.transaction() as conn:
-        db.dataset(conn, "stk_mins", "history", [1], {})
+        db.dataset(conn, "minutes", "history", [1], {})
     schedule_qlib(db, settings, at)
     assert not db.rows("SELECT * FROM pipeline_runs WHERE frequency='5min'")
     assert not db.setting("research_minute_readiness")["ready"]
@@ -818,7 +823,7 @@ def test_scheduler_periodic_training_reuses_requests_and_recovers_changed_inputs
     assert len(db.rows("SELECT * FROM pipeline_runs WHERE frequency='5min'")) == 1
     with db.transaction() as conn:
         conn.execute("UPDATE pipeline_runs SET state='blocked' WHERE id=%s", (runs[0]["id"],))
-        db.dataset(conn, "stk_mins", "history", [2], {})
+        db.dataset(conn, "minutes", "history", [2], {})
     schedule_qlib(db, settings, at + timedelta(minutes=4))
     assert len(db.rows("SELECT * FROM pipeline_runs WHERE frequency='5min'")) == 2
 
@@ -838,10 +843,20 @@ def test_scheduler_does_not_repeat_bulk_enqueue_work(db, settings, monkeypatch):
     enqueue = Mock(wraps=db.enqueue)
     monkeypatch.setattr(db, "enqueue", enqueue)
     tick(db, settings, at)
-    assert len(db.rows("SELECT * FROM jobs WHERE kind='security_history'")) == 2
+    cycle = str(day.replace(day=1))
+    target = day - timedelta(days=1)
+    rows = db.rows("SELECT dedupe,payload FROM jobs WHERE kind='security_history'")
+    keys = {row["dedupe"] for row in rows}
+    # 月度全表扫描负责范围之外的历史证券（含已退市的那一只）……
+    assert f"security-history:SH600000:{cycle}" in keys
+    assert f"security-history:SH600001:{cycle}" in keys
+    # ……而按**决策日**的范围刷新保证最新状态能覆盖决策日。少了它，月度刷新会把状态钉在当月 1 日，
+    # 1 日 18:30 之前的决策日（还是上月最后一个交易日）就再没有任何状态覆盖它，覆盖率每月归零一次。
+    scoped = [row for row in rows if row["dedupe"].startswith("security-scoped:")]
+    assert len(scoped) == 1 and scoped[0]["payload"]["day"] == str(target)
     enqueue.reset_mock()
     tick(db, settings, at + timedelta(seconds=5))
-    assert not [call for call in enqueue.call_args_list if call.args[1] in {"daily", "security_history", "benchmark"}]
+    assert not [call for call in enqueue.call_args_list if call.args[1] in {"history", "security_history", "benchmark"}]
 
 
 def test_frozen_pool_uses_only_revisions_known_at_session_open(db, settings):
@@ -958,7 +973,6 @@ def test_invalid_backup_never_restores_database(postgres_url, tmp_path, monkeypa
     import psycopg
     from psycopg import sql
     from psycopg.conninfo import make_conninfo
-    from unittest.mock import Mock
     from quant_platform.storage import artifacts
 
     body = b"fixture-dump-not-executable"
@@ -1024,8 +1038,18 @@ def test_invalid_backup_never_restores_database(postgres_url, tmp_path, monkeypa
             bundle.addfile(info, io.BytesIO(content))
     if mutation == "corrupt_tar":
         archive.write_bytes(b"not a tar archive")
-    restore = Mock(side_effect=AssertionError("Malformed archives must not reach pg_restore"))
-    monkeypatch.setattr(artifacts.subprocess, "run", restore)
+    # Reject only a real pg_restore invocation. Replacing `subprocess.run` wholesale also intercepts
+    # unrelated helpers that share the process, which turns an environment detail into a false pass.
+    execute = artifacts.subprocess.run
+    invoked = []
+
+    def run(args, **kwargs):
+        invoked.append(args[0] if args else "")
+        if args and args[0] == "pg_restore":
+            raise AssertionError("Malformed archives must not reach pg_restore")
+        return execute(args, **kwargs)
+
+    monkeypatch.setattr(artifacts.subprocess, "run", run)
     target_name = "quant_restore_" + uuid4().hex
     target_dsn = make_conninfo(postgres_url, dbname=target_name)
     destination = tmp_path / "restored"
@@ -1034,7 +1058,7 @@ def test_invalid_backup_never_restores_database(postgres_url, tmp_path, monkeypa
         try:
             with pytest.raises(PipelineBlocked):
                 artifacts.restore_check(archive, target_dsn, artifact_root=destination)
-            restore.assert_not_called()
+            assert "pg_restore" not in invoked
             assert not destination.exists() and not (tmp_path / "escape").exists()
             with psycopg.connect(target_dsn) as conn:
                 assert (
@@ -1232,3 +1256,131 @@ def test_maintenance_retains_reachable_artifacts_and_workflow_jobs(db, settings,
     assert len(db.rows("SELECT * FROM pipeline_steps WHERE run_id=%s", (run["id"],))) == 2
     assert not db.rows("SELECT * FROM jobs WHERE id=%s", (old,))
     assert len(db.rows("SELECT tablename FROM pg_tables WHERE tablename ~ '^minute_bars_[0-9]{8}$'")) >= 3
+
+
+def test_maintenance_partitions_run_under_the_worker_role(db, settings, postgres_url, tmp_path):
+    """Regression for the launch defect: every maintenance run aborted with InsufficientPrivilege.
+
+    The partitioned parents belong to the migration user while a worker may only assume
+    ``quant_worker``, so the ownership checks on ``CREATE TABLE ... PARTITION OF`` and ``DROP TABLE``
+    rejected the statements and no future partition was ever created. The repair exposes exactly
+    those two operations through allow-listed SECURITY DEFINER helpers; this test runs the job
+    through a worker-role connection, which is the configuration that used to fail.
+    """
+    from psycopg.errors import InsufficientPrivilege
+
+    from quant_platform.operations import maintenance
+    from quant_platform.storage import Database
+
+    day = now().astimezone(CN).date()
+    # Partitions are labelled by the calendar their ranges are aligned to, not by Beijing's. The
+    # helper casts the day to ``timestamptz`` under the session's ``Etc/UTC``, so ``quotes_20260927``
+    # covers 09-27 00:00Z..09-28 00:00Z and ``maintenance`` derives its window from the UTC date too.
+    # Reading the clock before the job runs also keeps the assertion safe across UTC midnight: the
+    # job's own date can only be equal to or later than this one, so its window still covers these
+    # three days. Using the Beijing date here made the check pass for 16 hours a day and fail for the
+    # other eight, whenever Beijing had already rolled over and UTC had not.
+    partition_day = now().date()
+    abandoned = day - timedelta(days=40)
+    with db.transaction() as conn:
+        db.enqueue(conn, "maintenance", "maintenance-role-test", "partition-role")
+    worker = Database(postgres_url, role="quant_worker")
+    try:
+        assert worker.role == "quant_worker", "The regression requires the restricted worker role."
+        with worker.transaction() as conn:
+            conn.execute("SELECT ensure_range_partition('quotes',%s)", (abandoned,))
+        settings.artifact_root = tmp_path
+        job = worker.claim("maintenance-role-test", "maintenance-role-owner")
+        maintenance(worker, settings, job)
+        assert worker.rows("SELECT status FROM jobs WHERE id=%s", (job["id"],))[0]["status"] == "complete"
+        planned = [(partition_day + timedelta(days=offset)) for offset in (1, 2, 3)]
+        for table in ("quotes", "alerts", "minute_bars"):
+            present = worker.rows(
+                "SELECT tablename FROM pg_tables WHERE tablename = ANY(%s)",
+                ([f"{table}_{when:%Y%m%d}" for when in planned],),
+            )
+            assert len(present) == 3, f"{table} partitions were not created: {present}"
+        assert not worker.rows("SELECT 1 FROM pg_tables WHERE tablename=%s", (f"quotes_{abandoned:%Y%m%d}",))
+        # The helpers are the only elevated path and they accept nothing outside the allow-list.
+        for table in ("instruments", "daily_bars", "quotes_default"):
+            with pytest.raises(InsufficientPrivilege):
+                with worker.transaction() as conn:
+                    conn.execute("SELECT ensure_range_partition(%s,%s)", (table, day))
+    finally:
+        worker.close()
+
+
+def test_scheduled_export_registers_a_sealed_generation(db, settings, tmp_path, monkeypatch):
+    """Regression for the launch defect: the automatic export published bytes but registered nothing.
+
+    ``/qlib-generations`` and ``data-readiness`` both read ``qlib_generations``, so an unregistered
+    export made a platform that had just produced a full research report still report
+    "no validated Qlib generation" and show no provenance at all.
+    """
+    from quant_platform.adapters.qlib import export as export_module
+    from quant_platform.adapters.qlib.data import verify
+    from quant_platform.domain.workflow import DATA_CONTRACT
+
+    # The sealed manifest must be verifiable without the optional Qlib runtime in this environment.
+    monkeypatch.setattr(export_module, "isolated_read", lambda path, code=None: {})
+
+    day = seed(db)
+    settings.history_sessions = 120
+    settings.artifact_root = tmp_path
+    target = day - timedelta(days=1)
+    sessions = [target - timedelta(days=index) for index in range(120)][::-1]
+    with db.transaction() as conn:
+        for session in sessions:
+            for exchange in ("SSE", "SZSE"):
+                conn.execute(
+                    "INSERT INTO calendars VALUES(%s,%s,true,now()) ON CONFLICT DO NOTHING", (exchange, session)
+                )
+        did = db.dataset(conn, "history", "SH600000", [{"day": str(target)}], {})
+        for session in sessions:
+            conn.execute(
+                "INSERT INTO daily_bars VALUES('SH600000',%s,%s,%s)",
+                (
+                    session,
+                    did,
+                    jsonb(
+                        {
+                            "day": str(session),
+                            "open": 8.0,
+                            "high": 9.0,
+                            "low": 7.0,
+                            "close": 8.0,
+                            "volume": 1000.0,
+                            "turnover": 8000.0,
+                        }
+                    ),
+                ),
+            )
+            conn.execute("INSERT INTO factors VALUES('SH600000',%s,%s,1.0)", (session, did))
+        db.enqueue(conn, "qlib_export", "qlib-data", "scheduled-export-registers", {"day": str(target)})
+
+    job = db.claim("qlib-data", "tester")
+    export_module.export(db, settings, job)
+    assert db.rows("SELECT status FROM jobs WHERE id=%s", (job["id"],))[0]["status"] == "complete"
+
+    rows = db.rows("SELECT * FROM qlib_generations")
+    assert len(rows) == 1
+    generation = rows[0]
+    assert generation["frequency"] == "day"
+    assert generation["contract"] == DATA_CONTRACT
+    assert generation["manifest"]["origin"] == "scheduled"
+    assert len(generation["manifest"]["days"]) == 120
+    assert generation["manifest"]["files"], "A published generation must carry per-file checksums."
+    verify(tmp_path / generation["path"], generation["manifest"])
+
+    # The operator status stays compact: the checksum index belongs in the registry, not in settings.
+    published = db.setting("qlib")
+    assert published["status"] == "published" and published["generation"] == generation["manifest"]["generation"]
+    assert "files" not in published
+    assert [row["kind"] for row in db.rows("SELECT kind FROM jobs WHERE kind='qlib_report'")] == ["qlib_report"]
+
+    # Registering the same immutable path twice must never duplicate provenance.
+    with db.transaction() as conn:
+        export_module.register_generation(
+            conn, tmp_path, tmp_path / generation["path"], generation["manifest"], generation["watermark"], now()
+        )
+    assert len(db.rows("SELECT * FROM qlib_generations")) == 1

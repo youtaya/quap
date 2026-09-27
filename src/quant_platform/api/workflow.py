@@ -56,7 +56,12 @@ def create_workflow_router(writes, reads, settings):
 
     @router.get("/qlib-generations")
     def generations(store=Depends(reads)):
-        return store.rows("SELECT * FROM qlib_generations ORDER BY created_at DESC LIMIT 100")
+        rows = store.rows("SELECT * FROM qlib_generations ORDER BY created_at DESC LIMIT 100")
+        for row in rows:
+            # Scheduled exports and pipeline-prepared generations share one provenance table. The
+            # origin is lifted out of the manifest so operators can tell them apart without parsing it.
+            row["origin"] = (row.get("manifest") or {}).get("origin") or "pipeline"
+        return rows
 
     @router.get("/pipeline-runs")
     def runs(store=Depends(reads)):

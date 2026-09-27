@@ -219,3 +219,9 @@ __marimo__/
 
 # Local runtime: backups, artifacts, observation logs
 .runtime/
+
+# Local pytest temp root (docs/部署说明.md: pass --basetemp and TMPDIR)
+.pytest-tmp/
+
+# Agent workspace state: per-machine work logs, not project source
+.workbuddy-ai/

@@ -37,11 +37,6 @@ class RuntimeOptions(StrictModel):
     expected_revision: int = Field(0, ge=0)
 
 
-class RuleInput(StrictModel):
-    rule: ScreenRule
-    expected_revision: int = Field(ge=0)
-
-
 class Approval(StrictModel):
     name: str = Field(min_length=1, max_length=120)
     symbols: list[str] = Field(min_length=1, max_length=200)
@@ -282,12 +277,15 @@ def create_app(settings=None, database=None, read_database=None):
         return rows[0] if rows else {"revision": 0, "data": ScreenRule().model_dump()}
 
     @router.put("/rules")
-    def change_rule(value: RuleInput, store=Depends(db)):
+    def change_rule():
+        # No body parameter on purpose: the answer is the same for every request. Declaring the old
+        # rule schema here would let a malformed body come back as 422, telling a caller their payload
+        # is wrong about a feature that no longer exists.
         raise HTTPException(410, "Native screening is retired. Use the versioned Qlib scan-policy resource.")
 
     @router.get("/reports")
     def reports(
-        kind: Literal["stock", "basket", "screen", "factor", "backtest", "market"] = "basket",
+        kind: Literal["stock", "basket", "screen", "factor", "backtest", "market", "qlib"] = "basket",
         target: str | None = None,
         limit: int = Query(100, ge=1, le=500),
         store=Depends(reads),
@@ -297,6 +295,43 @@ def create_app(settings=None, database=None, read_database=None):
             "ORDER BY as_of DESC,id DESC LIMIT %s",
             (kind, target, target, limit),
         )
+
+    @router.get("/qlib-report")
+    def qlib_report(target: str | None = None, store=Depends(reads)):
+        """Latest Qlib research report: predictive power, quantiles and the benchmark-relative book."""
+        rows = store.rows(
+            "SELECT * FROM reports WHERE kind='qlib' AND (%s::text IS NULL OR target=%s) "
+            "ORDER BY as_of DESC,id DESC LIMIT 1",
+            (target, target),
+        )
+        if not rows:
+            return {"report": None, "markdown": None, "reason": "No Qlib research report published yet."}
+        row = rows[0]
+        data = row["data"]
+        book = data.get("book") or {}
+        return {
+            "report": data,
+            "markdown": data.get("markdown"),
+            "report_id": row["id"],
+            "as_of": row["as_of"],
+            "target": row["target"],
+            "engine": row["engine"],
+            "summary": {
+                "samples": data.get("samples"),
+                "ic": data.get("ic"),
+                "rank_ic": data.get("rank_ic"),
+                "daily_ic": data.get("daily_ic"),
+                "quantiles": data.get("quantiles"),
+                "book": {
+                    "status": book.get("status"),
+                    "rebalances": book.get("rebalances"),
+                    "cumulative_return": book.get("cumulative_return"),
+                    "benchmark_cumulative_return": book.get("benchmark_cumulative_return"),
+                    "relative_return": book.get("relative_return"),
+                    "mean_turnover": book.get("mean_turnover"),
+                },
+            },
+        }
 
     @router.get("/market-report")
     def market_report(as_of: date | None = None, store=Depends(reads)):
@@ -381,15 +416,13 @@ def create_app(settings=None, database=None, read_database=None):
                 # Leave feed ownership, interval enforcement and quota accounting with the scheduler.
                 job_id = store.enqueue(conn, "refresh", "history", f"manual-refresh:{uuid4()}", priority=210)
                 return {"job_id": job_id}
-            kind = {"doctor": "doctor", "research": "research"}.get(value.action, "analyze")
+            # 走到这里的只有 `doctor`：`analyze`/`research` 在上面已经改排一次 Qlib 流水线运行，
+            # `pause`/`resume`/`refresh` 也已各自返回。
             target = store.setting("analysis_target")
-            if kind in {"analyze", "research"} and not target:
-                raise Conflict("No completed daily target is available.")
-            queue = {"doctor": "history", "research": "research"}.get(kind, "analysis")
             job_id = store.enqueue(
                 conn,
-                kind,
-                queue,
+                "doctor",
+                "history",
                 f"manual:{uuid4()}",
                 {"day": target} if target else {},
                 200,

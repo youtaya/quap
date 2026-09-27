@@ -38,7 +38,7 @@ def create_research_router(writes, reads, settings):
         return {
             "items": research.sources(store),
             "collection_enabled": settings.research_data_enabled,
-            "production_source": "tushare",
+            "production_source": "market",
             "production_eligible": False,
         }
 

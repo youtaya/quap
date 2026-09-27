@@ -6,6 +6,11 @@ from calendar import monthrange
 from quant_platform.domain import CN, digest, now, session
 from quant_platform.domain.workflow import PipelineBlocked, five_minute_end, intraday_window
 
+# 分析窗口之外还要多采集一个会话。窗口内最早一天的价格限制由「它前一天的收盘」推导，而那一天落在
+# 分析窗口之外：少了这个 lead-in，最早一天的 `constraints` 永远推不出来，准入判定也就永远不成立，
+# 平台永远不会产出代次。lead-in 只提供一根收盘价，不进代次窗口。
+LEAD_IN_SESSIONS = 1
+
 
 def checkpoint(db, conn, key, identity):
     """Commit scheduling intent with its jobs, once per input revision."""
@@ -28,25 +33,64 @@ def source_days(conn, cutoff, count):
     ]
 
 
-def daily_sources_ready(conn, days, count):
+def source_gaps(conn, days, count, factor_sessions):
+    """Why the dated daily source window is not yet admissible; empty when it is.
+
+    Raw bars and derived limits must cover the whole window, because the platform contract is
+    unadjusted prices plus limits derived from the previous close. The limits for the window's oldest
+    session come from the close of the session before it, which the collection window carries as a
+    lead-in (see ``LEAD_IN_SESSIONS``); requiring a limit per session is therefore satisfiable.
+
+    Adjustment factors are not the same window: they are bounded by the deepest front-adjusted series
+    the reachable sources publish (腾讯 stops at 800 sessions and 东方财富 may be unreachable), so only
+    a contiguous suffix of ``factor_sessions`` sessions is required. Demanding a factor for every
+    session would make the admission check unsatisfiable, which stalls the platform instead of
+    reporting a real gap.
+    """
     if len(days) < count:
-        return False
-    # Admission checks source partitions, not the status of unrelated or superseded jobs.
-    # Per-stock coverage, risk states, and feature continuity are checked by preparation.
-    partitions = conn.execute(
-        "SELECT count(DISTINCT (endpoint,scope)) AS n FROM datasets "
-        "WHERE endpoint IN ('daily','adj_factor','constraints') AND scope=ANY(%s)",
-        ([str(day) for day in days],),
-    ).fetchone()["n"]
+        return {"sessions": [len(days), count]}
+    scopes = [str(day) for day in days]
+    present = {
+        row["endpoint"]: row["n"]
+        for row in conn.execute(
+            "SELECT endpoint,count(DISTINCT scope) AS n FROM datasets "
+            "WHERE endpoint IN ('history','constraints') AND scope=ANY(%s) GROUP BY endpoint",
+            (scopes,),
+        ).fetchall()
+    }
+    adjusted = {
+        row["scope"]
+        for row in conn.execute(
+            "SELECT DISTINCT scope FROM datasets WHERE endpoint='factors' AND scope=ANY(%s)", (scopes,)
+        ).fetchall()
+    }
+    # ``days`` is most-recent-first, so the walk stops at the first unadjusted session.
+    suffix = 0
+    for day in days:
+        if str(day) not in adjusted:
+            break
+        suffix += 1
     benchmark = conn.execute(
         "SELECT 1 FROM daily_bars WHERE symbol='SH000300' AND day=%s LIMIT 1", (days[0],)
     ).fetchone()
     missing = conn.execute(
-        "SELECT 1 FROM instruments i WHERE i.list_date<=%s AND (i.delist_date IS NULL OR i.delist_date>=%s) "
+        "SELECT 1 FROM instruments i WHERE (i.list_date IS NULL OR i.list_date<=%s) "
+        "AND (i.delist_date IS NULL OR i.delist_date>=%s) "
         "AND NOT EXISTS(SELECT 1 FROM security_states s WHERE s.symbol=i.symbol) LIMIT 1",
         (days[0], days[-1]),
     ).fetchone()
-    return partitions == len(days) * 3 and bool(benchmark) and not missing
+    gaps = {}
+    for endpoint in ("history", "constraints"):
+        covered = present.get(endpoint, 0)
+        if covered < count:
+            gaps[endpoint] = [covered, count]
+    if suffix < factor_sessions:
+        gaps["factors"] = [suffix, factor_sessions]
+    if not benchmark:
+        gaps["benchmark"] = str(days[0])
+    if missing:
+        gaps["security_states"] = "a listed security has no recorded state"
+    return gaps
 
 
 def minute_ranges(days, today):
@@ -149,6 +193,10 @@ def schedule_training(db, requests, frequency, cutoff, period, identity):
 
 
 def tick(db, settings, at=None):
+    # 采集范围的定义只有一份，就在 ``collect`` 里；调度器、采集与流水线必须用同一个集合，
+    # 否则平台会训练在一个它并不采集的宇宙上。
+    from quant_platform.jobs.collect import scoped_codes_on
+
     at = at or now()
     local = at.astimezone(CN)
     day = local.date()
@@ -164,11 +212,12 @@ def tick(db, settings, at=None):
     with db.transaction() as conn:
         if not conn.execute("SELECT pg_try_advisory_xact_lock(77610231) AS acquired").fetchone()["acquired"]:
             return
-        for kind in ("calendar", "directory"):
+        for kind in ("calendar", "securities"):
             key = f"{kind}:{day}" if local.time() >= time(8, 30) else f"{kind}:{day - timedelta(days=1)}"
             db.enqueue(conn, kind, "history", key, priority=200)
         if open_today and local.time() >= time(9, 20):
-            db.enqueue(conn, "factors", "history", f"morning-factors:{day}", {"day": str(day)}, 190)
+            # 只刷新当日复权因子：当日 K 线未收盘，不能当作日线发布。
+            db.enqueue(conn, "factors", "history", f"morning-factors:{day}", {"end": str(day)}, 190)
             db.enqueue(conn, "constraints", "history", f"morning-constraints:{day}", {"day": str(day)}, 190)
         if directory_fresh:
             cycle = str(day.replace(day=1))
@@ -183,7 +232,7 @@ def tick(db, settings, at=None):
                     db.enqueue(
                         conn, "security_history", "history", f"security-history:{code}:{cycle}", {"symbol": code}, 20
                     )
-        quote_blocked = conn.execute("SELECT 1 FROM capabilities WHERE endpoint='rt_k' AND status='blocked'").fetchone()
+        quote_blocked = conn.execute("SELECT 1 FROM capabilities WHERE endpoint='quotes' AND status='blocked'").fetchone()
         if session(at, open_today)[1] and not db.setting("polling_paused", False) and not quote_blocked:
             busy = conn.execute(
                 "SELECT 1 FROM jobs WHERE queue='quotes' AND status IN ('pending','running') LIMIT 1"
@@ -209,22 +258,45 @@ def tick(db, settings, at=None):
                         100 if i == 0 else 50,
                     )
         cutoff = day if local.time() >= time(18, 30) else day - timedelta(days=1)
-        days = source_days(conn, cutoff, settings.history_sessions)
-        if symbols and directory_fresh and days and checkpoint(db, conn, "schedule:daily", [day, days, symbols]):
+        # 采集窗口比分析窗口多一个会话：`constraints` 在窗口内最早一天要用前一天的收盘，见
+        # ``LEAD_IN_SESSIONS``。分析窗口本身仍是 ``history_sessions`` 个会话。
+        window = source_days(conn, cutoff, settings.history_sessions + LEAD_IN_SESSIONS)
+        days = window[: settings.history_sessions]
+        if directory_fresh and days:
+            # 点位风险状态只能从观测当天起算（公开源不发布带日期的更名史），而 `build_generation`
+            # 要求状态的 `effective_day` 覆盖决策日。上面那条月度全表扫描把最新状态钉在**当月 1 日**：
+            # 1 日 18:30 之前的 `analysis_target` 还是上月最后一个交易日，那个窗口里没有任何状态能
+            # 覆盖决策日，覆盖率会再次归零。这是**每个月都会复发一次**的回归，不是首轮一次性的缺口。
+            #
+            # 修法：对采集范围按**决策日**观测一次。`security_history` 是纯本地推导（读主表名称），
+            # 不消耗任何源配额，所以每天一次是免费的；月度全表扫描保留，用来覆盖范围之外的历史证券。
+            scoped = sorted(scoped_codes_on(conn, settings, days[0]))
+            if scoped and checkpoint(db, conn, "schedule:security-scoped", [str(days[0]), scoped]):
+                for code in scoped:
+                    db.enqueue(
+                        conn,
+                        "security_history",
+                        "history",
+                        f"security-scoped:{code}:{days[0]}",
+                        {"symbol": code, "day": str(days[0])},
+                        30,
+                    )
+        if symbols and directory_fresh and days and checkpoint(db, conn, "schedule:history", [day, window, symbols]):
             target = days[0]
             db.set_setting(conn, "analysis_target", str(target))
             db.enqueue(conn, "benchmark", "history", f"benchmark:{target}:{day}", {"day": str(target)}, 150)
+            # One request per security covers the whole window; the job fans the window out per session.
+            db.enqueue(
+                conn,
+                "history",
+                "history",
+                f"history:{window[-1]}:{target}:{day}",
+                {"start": str(window[-1]), "end": str(target)},
+                100,
+            )
             for index, source_day in enumerate(days):
                 # Historical records are durable checkpoints. Recent dates revalidate daily; all dates weekly.
                 cycle = str(day) if index < 5 else str(day - timedelta(days=day.weekday()))
-                db.enqueue(
-                    conn,
-                    "daily",
-                    "history",
-                    f"daily:{source_day}:{cycle}",
-                    {"day": str(source_day)},
-                    100 - min(index, 99),
-                )
                 db.enqueue(
                     conn,
                     "constraints",
@@ -266,7 +338,8 @@ def schedule_qlib(db, settings, at):
     if target and inspect_daily:
         with db.transaction() as conn:
             days = source_days(conn, date.fromisoformat(target), settings.history_sessions)
-            ready = daily_sources_ready(conn, days, settings.history_sessions)
+            gaps = source_gaps(conn, days, settings.history_sessions, settings.factor_sessions)
+            ready = not gaps
             watermark = conn.execute(
                 "SELECT coalesce(max(id),0) AS id FROM datasets WHERE endpoint=ANY(%s)", (sorted(DAILY_DATASETS),)
             ).fetchone()["id"]
@@ -289,6 +362,18 @@ def schedule_qlib(db, settings, at):
                     "request_key": f"daily:{target}:{identity}",
                 }
             )
+            # A published immutable generation feeds one isolated Qlib research report. Queueing it
+            # here keeps reporting off the collection path: a missing Qlib install fails only that job.
+            with db.transaction() as conn:
+                conn.execute("SELECT pg_advisory_xact_lock(77610242)")
+                db.enqueue(
+                    conn,
+                    "qlib_export",
+                    "qlib-data",
+                    f"qlib-export:{target}:{watermark}",
+                    {"day": str(target), "watermark": watermark},
+                    80,
+                )
             schedule_training(db, requests, "day", cutoff, str(local.date().replace(day=1)), identity)
             minute_watermark = db.rows(
                 "SELECT coalesce(max(id),0) AS id FROM datasets WHERE endpoint=ANY(%s)", (sorted(MINUTE_CAPABILITIES),)
@@ -312,7 +397,9 @@ def schedule_qlib(db, settings, at):
                     conn,
                     "pipeline_blocker:day",
                     {
-                        "reason": "Required dated daily, factor, constraint, benchmark or security history is incomplete.",
+                        "reason": "Required dated daily source partitions are incomplete.",
+                        # 逐项列出缺什么、缺多少。只说「不完整」会让运维在 1500 个会话里自己找。
+                        "gaps": gaps,
                         "at": at.isoformat(),
                     },
                 )

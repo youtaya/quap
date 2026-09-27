@@ -132,6 +132,186 @@ class ContractTests(unittest.TestCase):
                 with self.assertRaises(PipelineBlocked):
                     build_generation(db, SimpleNamespace(artifact_root=Path(temporary)), run, {"id": 1})
 
+    def test_generation_keeps_a_security_whose_factors_only_cover_a_suffix(self):
+        """公开源的前复权序列比日 K 浅，所以窗口更早的那一段没有因子。
+
+        要求窗口最老一行必须有因子，会把「因子从某天起才可用」误判成「这只证券不可用」，把整批
+        证券挡在代次之外（只剩下基准指数）。锚点必须钉在最老的那一行已复权行上。
+        """
+        days = list(pd.bdate_range("2025-01-02", periods=90).date)
+        code = "SH600000"
+        daily = [
+            {
+                "day": day,
+                "factor": None if index < 25 else 1,
+                "dataset_id": 1,
+                "data": {"open": 8, "high": 9, "low": 7, "close": 8, "volume": 1000, "turnover": 8000},
+            }
+            for index, day in enumerate(days)
+        ]
+        cutoff = datetime.combine(days[-1], time(15), CN)
+        db = MagicMock()
+        db.history.return_value = daily
+        connection = db.transaction.return_value.__enter__.return_value
+        connection.execute.return_value.fetchone.return_value = {"anchor": 8}
+
+        def rows(query, params):
+            if "security_states" in query:
+                return [
+                    {
+                        "effective_day": days[0],
+                        "available_at": datetime.combine(days[0], time(), CN),
+                        "data": {"announcement_verified": True, "risk_warning": False},
+                    }
+                ]
+            if "market_constraints" in query:
+                return [{"day": day, "data": {"limit_up": 9, "limit_down": 7, "suspended": False}} for day in days]
+            raise AssertionError(query)
+
+        db.rows.side_effect = rows
+        snapshot = {
+            "watermark": 1,
+            "history_sessions": 90,
+            "minute_history_sessions": 252,
+            "calendars": [
+                {"exchange": exchange, "day": str(day), "is_open": True}
+                for day in days
+                for exchange in ("SSE", "SZSE")
+            ],
+            "instruments": {code: {"list_date": str(days[0])}},
+            "pools": [],
+            "policy": ScanPolicy().model_dump(),
+            "engine": "fixture",
+        }
+        run = {"snapshot": snapshot, "as_of": cutoff, "frequency": "day", "purpose": "inference"}
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            patch("quant_platform.adapters.qlib.runtime.validate_generation"),
+            patch("quant_platform.adapters.qlib.data.write_bins", wraps=write_bins) as writer,
+        ):
+            build_generation(db, SimpleNamespace(artifact_root=Path(temporary)), run, {"id": 1})
+        metadata = writer.call_args.args[-1]
+        self.assertEqual(metadata["omitted"], {}, "因子只覆盖后缀不是「这只证券不可用」")
+        self.assertIn(code, writer.call_args.args[1])
+        self.assertEqual(len(writer.call_args.args[1][code]), len(days))
+        anchors = [
+            call.args[1]
+            for call in connection.execute.call_args_list
+            if "INSERT INTO normalization_anchors" in call.args[0]
+        ]
+        self.assertEqual(anchors, [(code, 8.0, days[25], 1), ("SH000300", 8.0, days[0], 1)])
+
+    def test_training_accepts_an_unknown_point_in_time_risk_state_and_declares_it(self):
+        """观测日之前的历史 K 线没有点位风险状态：训练接受未知，但必须显式记录下来。
+
+        公开源不发布带日期的更名史，所以任何跨越观测日的历史训练集都拿不到点位风险状态。把「没有
+        状态」当成「这只证券不可用」会让整批证券进不了代次（覆盖率 0.0%，正是当前上线被挡住的
+        原因）；把它当成 0 则是把「未知」冒充成「无风险」。参考 QuantMind 对缺列的处置：留 NaN、
+        显式告警、绝不静默跳过。推断不适用这条 —— 决策日当天的状态是观测得到的。
+        """
+        days = list(pd.bdate_range("2025-01-02", periods=90).date)
+        code = "SH600000"
+        daily = [
+            {
+                "day": day,
+                "factor": 1,
+                "dataset_id": 1,
+                "data": {"open": 8, "high": 9, "low": 7, "close": 8, "volume": 1000, "turnover": 8000},
+            }
+            for day in days
+        ]
+        cutoff = datetime.combine(days[-1], time(15), CN)
+        db = MagicMock()
+        db.history.return_value = daily
+        connection = db.transaction.return_value.__enter__.return_value
+        connection.execute.return_value.fetchone.return_value = {"anchor": 8}
+
+        def rows(query, params):
+            if "security_states" in query:
+                return []  # 观测日之前没有任何点位状态
+            if "market_constraints" in query:
+                return [{"day": day, "data": {"limit_up": 9, "limit_down": 7, "suspended": None}} for day in days]
+            raise AssertionError(query)
+
+        db.rows.side_effect = rows
+        snapshot = {
+            "watermark": 1,
+            "history_sessions": 90,
+            "minute_history_sessions": 252,
+            "calendars": [
+                {"exchange": exchange, "day": str(day), "is_open": True} for day in days for exchange in ("SSE", "SZSE")
+            ],
+            "instruments": {code: {"list_date": str(days[0])}},
+            "pools": [],
+            "policy": ScanPolicy().model_dump(),
+            "engine": "fixture",
+        }
+        run = {"snapshot": snapshot, "as_of": cutoff, "frequency": "day", "purpose": "training"}
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            patch("quant_platform.adapters.qlib.runtime.validate_generation"),
+            patch("quant_platform.adapters.qlib.data.write_bins", wraps=write_bins) as writer,
+        ):
+            build_generation(db, SimpleNamespace(artifact_root=Path(temporary)), run, {"id": 1})
+        metadata = writer.call_args.args[-1]
+        self.assertEqual(metadata["omitted"], {}, "没有点位风险状态不是「这只证券不可用」")
+        self.assertEqual(metadata["market_coverage"], 1)
+        detail = metadata["coverage_detail"]
+        self.assertEqual(detail["declared_scope"], 1)
+        self.assertEqual(detail["eligible"], 1)
+        self.assertEqual(detail["ready"], 1)
+        self.assertEqual(detail["risk_state"]["covered_securities"], 0)
+        self.assertEqual(detail["risk_state"]["uncovered_securities"], 1)
+        self.assertFalse(detail["risk_state"]["dated"])
+        self.assertEqual(detail["adjusted_window"]["window_sessions"], len(days))
+        self.assertEqual(detail["adjusted_window"]["shorter_than_window"], 0)
+        written = writer.call_args.args[1][code]
+        self.assertTrue(all(math.isnan(row["features"]["risk"]) for row in written))
+
+    def test_inference_still_requires_a_point_in_time_risk_state(self):
+        """推断不接受未知：决策日当天的状态是观测得到的，缺了就是状态采集没跑到。"""
+        days = list(pd.bdate_range("2025-01-02", periods=90).date)
+        code = "SH600000"
+        daily = [
+            {
+                "day": day,
+                "factor": 1,
+                "dataset_id": 1,
+                "data": {"open": 8, "high": 9, "low": 7, "close": 8, "volume": 1000, "turnover": 8000},
+            }
+            for day in days
+        ]
+        cutoff = datetime.combine(days[-1], time(15), CN)
+        db = MagicMock()
+        db.history.return_value = daily
+        connection = db.transaction.return_value.__enter__.return_value
+        connection.execute.return_value.fetchone.return_value = {"anchor": 8}
+
+        def rows(query, params):
+            if "security_states" in query:
+                return []
+            if "market_constraints" in query:
+                return [{"day": day, "data": {"limit_up": 9, "limit_down": 7, "suspended": None}} for day in days]
+            raise AssertionError(query)
+
+        db.rows.side_effect = rows
+        snapshot = {
+            "watermark": 1,
+            "history_sessions": 90,
+            "minute_history_sessions": 252,
+            "calendars": [
+                {"exchange": exchange, "day": str(day), "is_open": True} for day in days for exchange in ("SSE", "SZSE")
+            ],
+            "instruments": {code: {"list_date": str(days[0])}},
+            "pools": [],
+            "policy": ScanPolicy().model_dump(),
+            "engine": "fixture",
+        }
+        run = {"snapshot": snapshot, "as_of": cutoff, "frequency": "day", "purpose": "inference"}
+        with tempfile.TemporaryDirectory() as temporary:
+            with self.assertRaisesRegex(PipelineBlocked, "missing_current_bar_adjustment"):
+                build_generation(db, SimpleNamespace(artifact_root=Path(temporary)), run, {"id": 1})
+
     def test_minute_training_uses_dated_membership_and_full_session_warmup(self):
         days = list(pd.bdate_range("2025-01-02", periods=70).date)
         research_days = days[-40:]
@@ -248,6 +428,42 @@ class ContractTests(unittest.TestCase):
                                 index = research_days.index(row["day"])
                                 if index < 20 or code not in pools[index]["data"]["symbols"]:
                                     self.assertNotIn("label", row["features"])
+
+
+    def test_publishing_never_prunes_a_generation_a_live_run_still_pins(self):
+        """钉住的代次被剪掉，就等于亲手造出一个永远跑不起来的运行。
+
+        磁盘上只留两代是刻意的，但 `pipeline_runs.snapshot.research_generation_id` 会按 id 钉住一代
+        并在之后重试它。保留策略把那一代剪掉之后，重试会在平台自己删掉的目录上报
+        `FileNotFoundError` —— 一个崩溃，而不是一个可读的前置条件。
+        """
+        from quant_platform.adapters.qlib.export import GenerationStore
+
+        with tempfile.TemporaryDirectory() as temporary:
+            store = GenerationStore(temporary)
+            store.prepare()
+            names = []
+            for _ in range(4):
+                stage = store.root / ("staging-" + uuid4().hex)
+                stage.mkdir()
+                (stage / "manifest.json").write_text("{}")
+                names.append("generation-" + uuid4().hex)
+                store.publish(stage, names[-1], retain={names[0]})
+            surviving = {path.name for path in store.root.iterdir() if path.is_dir()}
+        self.assertIn(names[0], surviving, "被运行钉住的代次不能被保留策略剪掉")
+        self.assertIn(names[-1], surviving)
+        # names[1] 既不是当前代、也不是上一代、也没有被钉住，照常回收。
+        self.assertNotIn(names[1], surviving, "保留策略不能退化成「什么都留」")
+        # 保留仍然有界：当前一代 + 上一代 + 被钉住的那一代。
+        self.assertEqual(len(surviving), 3)
+
+    def test_a_missing_pinned_generation_is_a_blocked_prerequisite_not_a_crash(self):
+        """钉住的代次不在磁盘上时，运维该看到「运行要重建」，而不是一段引擎 traceback。"""
+        from quant_platform.adapters.qlib.data import safe_artifact
+
+        with tempfile.TemporaryDirectory() as temporary:
+            with self.assertRaisesRegex(PipelineBlocked, "pinned generation artifact is missing"):
+                safe_artifact(Path(temporary), "qlib/generation-" + "0" * 32)
 
 
 def fixture_generation(root, frequency, extra_codes=()):

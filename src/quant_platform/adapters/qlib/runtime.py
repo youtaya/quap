@@ -299,29 +299,34 @@ def reconstruct_pools(prediction, manifest, segments):
             {
                 code
                 for code, item in instruments.items()
-                if item["list_date"] <= signal_day
+                if (not item.get("list_date") or item["list_date"] <= signal_day)
                 and (not item.get("delist_date") or item["delist_date"] >= signal_day)
             }
             if instruments
             else set(scores)
         )
-        ready = {
-            code
-            for code in eligible
-            if code in scores
-            and all(
-                finite(features.get(code, {}).get(field))
-                for field in (
-                    "price",
-                    "risk",
-                    "tradable",
-                    "limit_up",
-                    "limit_down",
-                    "listed_sessions",
-                    "average_turnover20",
-                )
-            )
-        }
+        required = (
+            "price",
+            "risk",
+            "tradable",
+            "limit_up",
+            "limit_down",
+            "listed_sessions",
+            "average_turnover20",
+        )
+        ready, deficits = set(), {}
+        for code in eligible:
+            if code not in scores:
+                deficits["missing_prediction"] = deficits.get("missing_prediction", 0) + 1
+                continue
+            # 逐字段记缺口，而不是只记「这只证券没就绪」。一个 `coverage 0%` 无法告诉运维该去修采集、
+            # 换范围，还是承认这条数据在公开源上根本拿不到 —— 而这三个结论要采取的动作完全不同。
+            missing = [field for field in required if not finite(features.get(code, {}).get(field))]
+            if missing:
+                for field in missing:
+                    deficits[field] = deficits.get(field, 0) + 1
+            else:
+                ready.add(code)
         coverage = len(ready) / len(eligible) if eligible else 0
         result = proposals(
             {code: value for code, value in scores.items() if code in eligible}, features, manifest["policy"]
@@ -343,6 +348,9 @@ def reconstruct_pools(prediction, manifest, segments):
             "coverage": coverage,
             "ready": coverage >= manifest["policy"]["minimum_coverage"],
             "omitted": sorted(eligible - ready),
+            # 每个字段各缺了多少只。「缺了什么」决定该修什么：`risk` 缺是公开源没有带日期的风险
+            # 状态（数据可得性问题），`missing_prediction` 缺是模型没覆盖到（模型问题）。
+            "feature_deficits": dict(sorted(deficits.items(), key=lambda item: -item[1])),
         }
     if not pools:
         raise PipelineBlocked("No out-of-sample daily predictions are available for historical pools.")
@@ -429,24 +437,29 @@ def train_artifact(
         ric = recorder.load_object("sig_analysis/ric.pkl")
         rank_ic = float(ric.mean())
         metrics["rank_ic"] = rank_ic if math.isfinite(rank_ic) else None
-        passed = (
-            metrics["rank_ic"] is not None
-            and rank_ic > 0
-            and metrics["excess_return"] > 0
-            and metrics["max_drawdown"] <= 0.2
-        )
+        # 逐条列出**没有通过哪一项**。`passed: false` 加一堆指标，等于让运维自己反推判据；而这个判据
+        # 决定了该去修数据、换范围，还是承认这个模型就是不行 —— 三种结论的动作完全不同。
+        rejection_reasons = []
+        if metrics["rank_ic"] is None:
+            rejection_reasons.append("rank_ic_unavailable")
+        elif rank_ic <= 0:
+            rejection_reasons.append("rank_ic_not_positive")
+        if not metrics["excess_return"] > 0:
+            rejection_reasons.append("excess_return_not_positive")
+        if not metrics["max_drawdown"] <= 0.2:
+            rejection_reasons.append("max_drawdown_above_limit")
+        passed = not rejection_reasons
         if manifest["frequency"] == "5min":
             baseline_report = port_record(
                 recorder, prediction, segments, manifest, -1e30, daily_targets, "daily_baseline"
             )
             baseline_metrics = report_metrics(baseline_report)
             metrics["daily_baseline"] = baseline_metrics
-            passed = (
-                metrics["rank_ic"] is not None
-                and rank_ic > 0
-                and metrics["net_return"] >= baseline_metrics["net_return"]
-                and metrics["max_drawdown"] <= baseline_metrics["max_drawdown"]
-            )
+            if metrics["net_return"] < baseline_metrics["net_return"]:
+                rejection_reasons.append("below_daily_baseline")
+            if metrics["max_drawdown"] > baseline_metrics["max_drawdown"]:
+                rejection_reasons.append("drawdown_above_daily_baseline")
+            passed = not rejection_reasons
         pools = {}
         if manifest["frequency"] == "day":
             research = DatasetH(handler=handler, segments={"research": (segments["test"][0], manifest["days"][-1])})
@@ -455,10 +468,18 @@ def train_artifact(
             (output / "research_pools.json").write_text(json.dumps(pools, allow_nan=False))
             research_prediction.to_csv(output / "research_predictions.csv")
             metrics["historical_pool_coverage_passed"] = all(pool["ready"] for pool in pools.values())
+            deficits = {}
+            for pool in pools.values():
+                for field, count in pool.get("feature_deficits", {}).items():
+                    deficits[field] = deficits.get(field, 0) + count
+            metrics["historical_pool_feature_deficits"] = dict(sorted(deficits.items(), key=lambda item: -item[1]))
+            if not metrics["historical_pool_coverage_passed"]:
+                rejection_reasons.append("historical_pool_coverage_not_met")
             passed = passed and metrics["historical_pool_coverage_passed"]
         evaluation = {
             **metrics,
             "passed": passed,
+            "rejection_reasons": rejection_reasons,
             "recorder_id": recorder.id,
             "segments": segments,
             "strategy": STRATEGY_VERSION,
@@ -702,6 +723,10 @@ def infer(db, settings, run, job):
                 evaluation=model["evaluation"],
                 coverage=generation["manifest"]["market_coverage"],
                 omitted=generation["manifest"]["omitted"],
+                # 覆盖率的分母、逐项排除理由、点位风险状态与复权窗口深度。只给一个百分比，读的人无法
+                # 判断该去修采集、换范围，还是接受这个样本面 —— 所以把「为什么是这些证券」一起发出去。
+                # 冻结实验引用的旧代次可能没有这个字段，缺失就是缺失，不编一个默认值。
+                coverage_detail=generation["manifest"].get("coverage_detail"),
             )
             conn.execute(
                 "UPDATE recommendations SET state='superseded' WHERE frequency=%s AND portfolio_id IS NOT DISTINCT FROM %s::uuid AND state='published'",

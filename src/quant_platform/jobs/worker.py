@@ -13,13 +13,49 @@ import uuid
 
 from quant_platform.domain.workflow import PipelineBlocked
 from quant_platform.providers import Deferred, PermissionDenied, ProviderError
-from quant_platform.providers.tushare import Tushare
+from quant_platform.providers.market import Market
 from quant_platform.storage import LostLease
 from . import analyze, collect
 from .scheduler import tick
 
 LOG = logging.getLogger(__name__)
 MAX_QLIB_LOG_BYTES = 32 * 1024 * 1024
+# 平台能执行的全部任务种类。这是权威清单：`execute` 以它为准，`operations.doctor` 用它把升级后
+# 残留的已退役种类判失败。旧令牌时代把主表采集叫 `directory`，换源后改叫 `securities`；原生分析
+# 把日终分析叫 `analyze`、研究回测叫 `research`，现在都由显式的 Qlib 流水线运行取代。升级过的
+# 部署会留下这些种类的行，既不会被任何处理器执行，也不会被解除阻塞逻辑碰到，只会一直挂在运维面板上。
+JOB_KINDS = frozenset(
+    {
+        "backup",
+        "benchmark",
+        "calendar",
+        "constraints",
+        "doctor",
+        "factors",
+        "history",
+        "intraday",
+        "maintenance",
+        "market_report",
+        "minute_history",
+        "minute_live",
+        "minute_repair",
+        "notify",
+        "qlib_diagnostics",
+        "qlib_experiment",
+        "qlib_export",
+        "qlib_infer",
+        "qlib_prepare",
+        "qlib_report",
+        "qlib_shadow",
+        "qlib_train",
+        "qualification",
+        "quotes",
+        "refresh",
+        "research_collect",
+        "securities",
+        "security_history",
+    }
+)
 
 
 class Worker:
@@ -105,16 +141,20 @@ class Worker:
     def deadline(self, job):
         if job["kind"] in {"qlib_train", "qlib_experiment"}:
             return self.settings.training_deadline_seconds
-        if job["kind"] in {"qlib_prepare", "backup", "qlib_diagnostics", "research_collect"}:
+        if job["kind"] in {"qlib_prepare", "backup", "qlib_diagnostics", "qlib_report", "research_collect"}:
             return self.settings.data_deadline_seconds
         if job["kind"] in {"qlib_infer", "qlib_shadow"}:
             return self.settings.inference_deadline_seconds
         return 1800
 
     def qlib_step(self, job):
+        return self.isolated_step(job, "quant_platform.adapters.qlib.runtime")
+
+    def isolated_step(self, job, module):
+        """Run one Qlib-touching step in its own process; this worker never imports Qlib."""
         with tempfile.TemporaryFile() as output:
             process = subprocess.Popen(
-                [sys.executable, "-m", "quant_platform.adapters.qlib.runtime"],
+                [sys.executable, "-m", module],
                 stdin=subprocess.PIPE,
                 stdout=output,
                 stderr=output,
@@ -135,6 +175,8 @@ class Worker:
                     output.seek(max(0, output.tell() - 8192))
                     tail = output.read().decode(errors="replace")
                     if process.returncode == 3:
+                        # 3 是引擎自报「前置条件不满足」的约定码：原因由我们自己的运行时模块用
+                        # `QUAP_BLOCKED=` 显式给出，是我们审核过的文案，可以安全转述给使用者。
                         reason = next(
                             (
                                 line.split("QUAP_BLOCKED=", 1)[1]
@@ -144,8 +186,19 @@ class Worker:
                             "Qlib prerequisites are unavailable.",
                         )
                         raise PipelineBlocked(reason[:2000])
+                    # 其他返回码意味着引擎自己崩了（不是「前置条件不满足」）。它写出来的东西**没有
+                    # 经过我们审核**，可能带连接串、令牌、内网路径；而这条错误会落进 jobs 表、进而
+                    # 在运维面板和 API 上被读到。所以原始输出只进进程日志，对外仍只给一句可安全转述
+                    # 的结论 —— 把子进程输出直接当消息，等于把日志里的秘密搬到产品界面上。
+                    detail = " | ".join(line.strip() for line in tail.splitlines()[-6:] if line.strip())
+                    LOG.error(
+                        "Qlib engine step failed (exit %s); tail: %s",
+                        process.returncode,
+                        detail[:1500] or "none",
+                    )
                     raise PipelineBlocked(
-                        "Qlib engine step failed; inspect the generation and runtime qualification tests."
+                        f"Qlib engine step failed (exit {process.returncode}); inspect the container logs and the "
+                        "generation and runtime qualification tests."
                     )
             finally:
                 if process.poll() is None:
@@ -157,10 +210,12 @@ class Worker:
 
     def execute(self, job):
         kind = job["kind"]
+        if kind not in JOB_KINDS:
+            raise ValueError("Unknown job kind.")
         if kind in {
-            "directory",
+            "securities",
             "calendar",
-            "daily",
+            "history",
             "factors",
             "quotes",
             "doctor",
@@ -171,10 +226,10 @@ class Worker:
             "security_history",
             "constraints",
         }:
-            self.feed = self.feed or Tushare(self.settings, self.db)
-        if kind in {"directory", "calendar"}:
+            self.feed = self.feed or Market(self.settings, self.db)
+        if kind in {"securities", "calendar"}:
             collect.reference(self.db, self.feed, job)
-        elif kind in {"daily", "factors"}:
+        elif kind in {"history", "factors"}:
             collect.history(self.db, self.feed, job)
         elif kind == "quotes":
             collect.quotes(self.db, self.feed, job)
@@ -182,10 +237,20 @@ class Worker:
             collect.benchmark(self.db, self.feed, job)
         elif kind == "intraday":
             analyze.intraday(self.db, job)
-        elif kind in {"analyze", "research", "qlib_export"}:
-            raise PipelineBlocked("Legacy native analysis/export is retired. Create an explicit Qlib pipeline run.")
+        elif kind == "market_report":
+            # `POST /market-report` 与看板的「生成/刷新报告」都排这个任务；分派链漏掉它时，两者
+            # 都只会拿到一个以 "Unknown job kind." 失败的任务。
+            from quant_platform.analysis import market_report
+
+            market_report.publish(self.db, self.settings, job)
+        elif kind == "qlib_export":
+            from quant_platform.adapters.qlib.export import export
+
+            export(self.db, self.settings, job)
         elif kind in {"qlib_prepare", "qlib_train", "qlib_infer", "qlib_shadow"}:
             self.qlib_step(job)
+        elif kind == "qlib_report":
+            self.isolated_step(job, "quant_platform.adapters.qlib.report")
         elif kind == "research_collect":
             from .supplemental import collect as collect_supplemental
 
@@ -207,7 +272,7 @@ class Worker:
             with self.db.publication(job) as conn:
                 children = [
                     self.db.enqueue(conn, kind, "history", f"refresh:{job['id']}:{kind}", priority=200)
-                    for kind in ("calendar", "directory")
+                    for kind in ("calendar", "securities")
                 ]
                 conn.execute(
                     "UPDATE jobs SET progress=%s WHERE id=%s",
@@ -237,4 +302,5 @@ class Worker:
 
             deliver(self.db, self.settings, job)
         else:
-            raise ValueError("Unknown job kind.")
+            # JOB_KINDS 与下面的分派链不一致：清单说这个种类可执行，却没有分支处理它。
+            raise ValueError(f"Job kind {kind!r} is declared in JOB_KINDS but not dispatched.")

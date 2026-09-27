@@ -1,9 +1,11 @@
 """Prepare private file secrets for the single-operator local Docker deployment.
 
-Supply tushare_token yourself. Existing credentials are never replaced or printed.
-The private directory is mode 0700; its mounted files are 0444 so container UID
-10001 can read them without making the host directory traversable by other users.
-Use a secret manager and explicit UID permissions for a multi-user Linux server.
+The public A-share market provider needs no vendor token, so only the database
+credentials and the operator API token are provisioned. Existing credentials are
+never replaced or printed. The private directory is mode 0700; its mounted files
+are 0444 so container UID 10001 can read them without making the host directory
+traversable by other users. Use a secret manager and explicit UID permissions for
+a multi-user Linux server.
 """
 
 import argparse
@@ -14,7 +16,7 @@ import secrets
 import stat
 from urllib.parse import quote, unquote, urlsplit
 
-NAMES = ("postgres_password", "database_url", "api_token", "tushare_token")
+NAMES = ("postgres_password", "database_url", "api_token")
 
 
 def read_secret(path):
@@ -39,8 +41,6 @@ def prepare(directory):
     if directory.exists() and (not directory.is_dir() or directory.stat().st_uid != os.getuid()):
         raise ValueError("The secrets directory must be owned by the invoking user.")
     supplied = {name: read_secret(directory / name) for name in NAMES}
-    if not supplied["tushare_token"]:
-        raise ValueError("Provision deploy/secrets/tushare_token privately before running this helper.")
     if supplied["database_url"] and not supplied["postgres_password"]:
         raise ValueError("Existing database_url requires its matching postgres_password file.")
     password = supplied["postgres_password"] or secrets.token_urlsafe(48)
@@ -83,7 +83,7 @@ def prepare(directory):
         "created": created,
         "secret_directory": str(directory),
         "credentials_disclosed": False,
-        "provider_entitlement_verified": False,
+        "source_reachability_verified": False,
     }
 
 

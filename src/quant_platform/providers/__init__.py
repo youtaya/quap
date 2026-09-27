@@ -1,42 +1,29 @@
 """Public-market data boundary: tokenless HTTPS sources, explicit units, no synthetic fallback.
 
-Capability identifiers (``stock_basic``, ``trade_cal``, ``daily`` ...) are stable internal names shared
-with the ``capabilities``/``datasets`` tables. Rows returned by ``request`` follow one provider-neutral
-contract regardless of the upstream site that served them:
+Capability identifiers are stable internal names shared with the ``capabilities``/``datasets`` tables.
+They describe a *capability*, not a vendor endpoint; :mod:`quant_platform.providers.market` serves each
+one from the first reachable source in the go-stock-style A-share degradation order
+(通达信 → 东方财富 → 新浪 → 腾讯) and records the source that actually answered.
 
-- ``stock_basic``: code, name, exchange (SSE/SZSE), list_status, list_date (date or None), delist_date
-- ``trade_cal``: exchange, day, is_open, inferred
-- ``daily``/``index_daily``: code, day, open, high, low, close, pre_close, volume (shares), turnover (CNY or None)
-- ``adj_factor``: code, day, factor, source
-- ``suspend_d``: code, day, suspend_type ("S"), derived
-- ``rt_k``: code, name, open, high, low, close, pre_close, volume (shares), turnover (CNY), trade_time
-- ``stk_mins``/``rt_min``/``rt_min_daily``: code, time, open, high, low, close, volume (shares), turnover (CNY or None)
-- ``namechange``: code, name, start_date, end_date, ann_date, change_reason
-- ``stk_limit``: code, day, up_limit, down_limit, derived
+Provider-neutral contracts:
+
+- ``securities``: symbol, name, exchange (SSE/SZSE), board, list_status, list_date, delist_date
+- ``calendar``: exchange, day, is_open
+- ``history``: symbol, day, open, high, low, close, pre_close, volume (shares), turnover (CNY or None)
+- ``factors``: symbol, day, factor (qfq / raw), source
+- ``benchmark``: symbol, day, open, high, low, close, pre_close, volume (shares), turnover (CNY or None)
+- ``quotes``: symbol, name, open, high, low, close, pre_close, volume (shares), turnover (CNY), source_time
+- ``minutes``: symbol, bar_end, bar_start, available_at, finalized, OHLC, volume (shares), amount (CNY)
+- ``constraints``: symbol, day, limit_up, limit_down, suspended (derived from stored closes, never
+  fetched). ``suspended`` is ``None`` — no tokenless source publishes suspensions, and reporting
+  ``False`` would turn "unknown" into "confirmed tradeable".
+- ``security_history``: symbol, name, start, end, risk_warning, observed (not announced)
 """
-
-from datetime import date, datetime
-from typing import Protocol
 
 from quant_platform.domain import number
 
-PROVIDER = "public-market"
-
-CAPABILITIES = {
-    "stock_basic",
-    "trade_cal",
-    "daily",
-    "index_daily",
-    "adj_factor",
-    "suspend_d",
-    "rt_k",
-    "stk_mins",
-    "rt_min",
-    "rt_min_daily",
-    "namechange",
-    "stk_limit",
-}
-MINUTE_ENDPOINTS = {"stk_mins", "rt_min", "rt_min_daily"}
+# go-stock A-share degradation order; each source is tried before the next.
+SOURCES = ("pytdx", "eastmoney", "sina", "tencent")
 
 
 class ProviderError(RuntimeError):
@@ -51,24 +38,6 @@ class Deferred(ProviderError):
     def __init__(self, message, seconds=60):
         super().__init__(message)
         self.seconds = seconds
-
-
-class MarketProvider(Protocol):
-    def request(self, endpoint: str, params: dict, probe: bool = False) -> list[dict]: ...
-
-
-def parse_date(value):
-    if isinstance(value, datetime):
-        return value.date()
-    if isinstance(value, date):
-        return value
-    text = str(value).strip()
-    for fmt in ("%Y%m%d", "%Y-%m-%d"):
-        try:
-            return datetime.strptime(text[:10] if fmt == "%Y-%m-%d" else text[:8], fmt).date()
-        except ValueError:
-            pass
-    raise ProviderError("Invalid provider trading date.")
 
 
 def prices(row, strict=True):

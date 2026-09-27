@@ -59,14 +59,19 @@ def test_alert_outbox_survives_failed_delivery(db, settings):
     assert db.rows("SELECT delivered_at FROM alert_outbox")[0]["delivered_at"] is not None
 
 
-def test_native_research_worker_is_retired_without_fallback(db, settings, history_rows):
-    from quant_platform.jobs.research import run
-    from quant_platform.domain.workflow import PipelineBlocked
+def test_retired_native_analysis_leaves_no_handler_and_no_fallback(db, settings, history_rows):
+    """原生日终分析与研究回测已由显式的 Qlib 流水线取代。
 
-    target, _rows = seed_analysis(db, history_rows)
-    item = job(db, "research", queue="research", payload={"day": str(target)})
-    with pytest.raises(PipelineBlocked, match="Native evaluation is retired"):
-        run(db, item, settings)
+    退役的种类不在权威清单里，残留任务由 `doctor` 判失败；再留一份永远不会被调用的墓碑处理器，
+    只会让「已经退役」这件事多一个需要同步的地方。
+    """
+    from quant_platform.jobs.worker import JOB_KINDS, Worker
+
+    for kind in ("analyze", "research"):
+        assert kind not in JOB_KINDS
+        with pytest.raises(ValueError, match="Unknown job kind"):
+            Worker(db, settings, "analysis").execute({"id": 1, "kind": kind, "payload": {}})
+    seed_analysis(db, history_rows)
     assert not db.rows("SELECT * FROM reports WHERE kind='backtest'")
     assert not db.rows("SELECT * FROM recommendations")
 

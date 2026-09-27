@@ -28,11 +28,11 @@ from quant_platform.api import create_app
 from quant_platform.jobs.worker import Worker
 from quant_platform.jobs.collect import history, quotes
 from quant_platform.dashboard.client import Client
-from quant_platform.analysis import indicators
+from quant_platform.analysis import basket_summary
 from quant_platform.storage import Database
 from quant_platform.config import Settings
 assert create_app(Settings()).title == "Standalone Quant Platform"
-assert indicators([])["status"] == "insufficient_data"
+assert basket_summary({}, {}, None)["coverage"] == 0
 assert not any(m == "qlib" or m.startswith("qlib.") for m in sys.modules)
 for name in ("pyqlib", "mlflow", "lightgbm", "adata"):
     try:
@@ -55,7 +55,7 @@ def test_log_messages_are_encoded_as_valid_json():
 def fake_request(self, method, path, data=None):
     if path == "/status":
         return {
-            "provider": "tushare",
+            "provider": "market",
             "timestamp": "2026-09-24T01:35:00+00:00",
             "boards": [
                 {"board": "STAR Market", "listed": 20, "coverage": 0.5, "daily_return": 0.025},
@@ -105,7 +105,10 @@ def signed_app(monkeypatch):
 
 
 def test_dashboard_requires_login_without_spawning_workers():
-    app = AppTest.from_file(str(APP)).run()
+    # Same 15-second budget as the rest of this file. The Streamlit default is 3 seconds, which the
+    # first script run of the suite exceeds on a loaded machine — the import graph alone takes longer
+    # — and AppTest then raises ``timed out after 3(s)`` instead of reporting a real failure.
+    app = AppTest.from_file(str(APP), default_timeout=15).run()
     assert not app.exception
     assert app.text_input[0].label == "访问令牌"
     assert not app.sidebar.radio
@@ -122,6 +125,94 @@ def test_dashboard_degraded_status_and_history_without_quotes(monkeypatch):
     next(b for b in app.button if b.label == "View prices and model research").click().run()
     assert not app.exception
     assert any("Unadjusted CNY" in text.value for text in app.caption)
+
+
+def test_dashboard_labels_turnover_by_meaning_not_by_field_name(monkeypatch):
+    """`turnover` is CNY traded value platform-wide; the Qlib book reuses the name for a ratio.
+
+    The shared label map held both meanings under one key, so the last one silently won and the
+    ratio label would have been applied to any market table that renders a `turnover` column. The
+    book now asks for its own label, which leaves the platform-wide meaning intact.
+    """
+    fixture = {
+        "report_id": 7,
+        "as_of": "2026-01-05",
+        "target": "SH000300",
+        "engine": "qlib-0.9.7:qlib-report-1",
+        "markdown": "",
+        "report": {
+            "book": {
+                "status": "complete",
+                "rebalances": 3,
+                "cumulative_return": 0.12,
+                "benchmark_cumulative_return": 0.05,
+                "periods": [
+                    {
+                        "day": "2025-12-08",
+                        "next_day": "2026-01-05",
+                        "holdings": 30,
+                        "net_return": 0.03,
+                        "benchmark_return": 0.01,
+                        "turnover": 0.3,
+                    }
+                ],
+            }
+        },
+        "summary": {
+            "book": {
+                "status": "complete",
+                "rebalances": 3,
+                "mean_turnover": 0.3,
+                "relative_return": 0.07,
+                "cumulative_return": 0.12,
+                "benchmark_cumulative_return": 0.05,
+            }
+        },
+    }
+
+    def request(self, method, path, data=None):
+        return fixture if path == "/qlib-report" else fake_request(self, method, path, data)
+
+    monkeypatch.setattr(client.Client, "request", request)
+    app = AppTest.from_file(str(APP), default_timeout=15)
+    app.session_state["token"] = "test-token"
+    app.run()
+    app.sidebar.radio[0].set_value("Qlib Report").run()
+    assert not app.exception
+    columns = list(app.dataframe[-1].value.columns)
+    assert "单边换手" in columns
+    assert "成交额（元）" not in columns
+
+
+def test_dashboard_offers_only_pipeline_prepared_generations_for_experiments(monkeypatch):
+    """Scheduled exports share the provenance table but are not comparable experiment inputs.
+
+    An export carries no frozen intraday pools and no strategy snapshot, so offering it beside a
+    prepared generation would let an operator pick an input that cannot run.
+    """
+    scheduled = {"id": "00000000-0000-0000-0000-0000000000aa", "frequency": "day", "origin": "scheduled"}
+    prepared = {"id": "00000000-0000-0000-0000-0000000000bb", "frequency": "day", "origin": "pipeline"}
+    configs = [
+        {"id": "00000000-0000-0000-0000-0000000000c1", "name": "Baseline", "revision": 1, "frequency": "day"},
+        {"id": "00000000-0000-0000-0000-0000000000c2", "name": "Candidate", "revision": 1, "frequency": "day"},
+    ]
+
+    def request(self, method, path, data=None):
+        if path == "/qlib-generations":
+            return [scheduled, prepared]
+        if path.startswith("/training-configurations"):
+            return {"items": configs, "next_offset": None}
+        return fake_request(self, method, path, data)
+
+    monkeypatch.setattr(client.Client, "request", request)
+    app = AppTest.from_file(str(APP), default_timeout=15)
+    app.session_state["token"] = "test-token"
+    app.run()
+    app.sidebar.radio[0].set_value("Models & Validation").run()
+    assert not app.exception
+    chooser = next(box for box in app.selectbox if box.label == "Canonical prepared generation")
+    assert chooser.options == [f"{prepared['id']} · day"]
+    assert all(scheduled["id"] not in option for option in chooser.options)
 
 
 def test_dashboard_disconnection_is_visible(monkeypatch):
@@ -359,30 +450,27 @@ def test_local_preparation_preserves_credentials_and_private_directory(tmp_path)
 
     root = tmp_path.resolve() / "secrets"
     root.mkdir()
-    (root / "tushare_token").write_text("test-fixture-token")
     prepare = load_local_preparation()
     first = prepare(root)
     before = {p.name: p.read_bytes() for p in root.iterdir()}
     assert set(first["created"]) == {"postgres_password", "database_url", "api_token"}
-    assert not first["provider_entitlement_verified"]
+    assert set(before) == {"postgres_password", "database_url", "api_token"}
+    assert not first["source_reachability_verified"]
     assert prepare(root)["created"] == []
     assert before == {p.name: p.read_bytes() for p in root.iterdir()}
     assert stat.S_IMODE(root.stat().st_mode) == 0o700
     assert all(stat.S_IMODE(p.stat().st_mode) == 0o444 for p in root.iterdir())
     assert len(before["api_token"].strip()) >= 32
-    assert "test-fixture-token" not in json.dumps(first)
+    assert before["api_token"].decode().strip() not in json.dumps(first)
+    assert before["postgres_password"].decode().strip() not in json.dumps(first)
 
 
-def test_local_preparation_rejects_missing_token_and_conflicting_database(tmp_path):
+def test_local_preparation_rejects_conflicting_database_credentials(tmp_path):
     import pytest
 
     root = tmp_path.resolve() / "secrets"
     root.mkdir()
     prepare = load_local_preparation()
-    with pytest.raises(ValueError, match="Provision"):
-        prepare(root)
-    assert not list(root.iterdir())
-    (root / "tushare_token").write_text("test-fixture-token")
     (root / "postgres_password").write_text("test-password")
     (root / "database_url").write_text("postgresql://quant:wrong@postgres:5432/quant")
     with pytest.raises(ValueError, match="do not match"):
@@ -397,7 +485,7 @@ def test_local_preparation_rejects_symlink_secret(tmp_path):
     root.mkdir()
     target = tmp_path / "outside"
     target.write_text("test-fixture-token")
-    (root / "tushare_token").symlink_to(target)
+    (root / "api_token").symlink_to(target)
     with pytest.raises(ValueError, match="symbolic"):
         load_local_preparation()(root)
     assert target.read_text() == "test-fixture-token"
@@ -424,10 +512,66 @@ def test_local_compose_uses_persistent_backup_volume():
         assert service["profiles"] == ["research"]
         assert service["command"] == ["worker", "--role", role]
         assert service["secrets"] == ["database_url"]
-        assert not {"QUANT_API_TOKEN_FILE", "QUANT_TUSHARE_TOKEN_FILE"} & service["environment"].keys()
+        assert "QUANT_API_TOKEN_FILE" not in service["environment"]
         assert service["read_only"] and service["cpus"] <= 2 and service["pids_limit"] <= 256
         assert service["build"]["target"] == ("research-data" if role == "research-data" else "qlib")
     assert base["services"]["research-data"]["environment"]["QUANT_RESEARCH_DATA_ENABLED"].endswith(":-false}")
+
+
+def test_every_enqueued_job_kind_has_a_handler():
+    """调度器排队的种类，处理器必须认识。
+
+    令牌时代的主表采集叫 `directory`，换源后改名 `securities`，但调度器与处理器的清单没有一起
+    更新；升级过的部署因此留下永远无法执行的阻塞任务。
+    """
+    import ast
+
+    from quant_platform.jobs.worker import JOB_KINDS
+
+    enqueued = set()
+    for path in (Path(__file__).parents[1] / "src").rglob("*.py"):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if not isinstance(node, ast.Call) or len(node.args) < 2:
+                continue
+            callee = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", "")
+            kind = node.args[1]
+            if callee == "enqueue" and isinstance(kind, ast.Constant) and isinstance(kind.value, str):
+                enqueued.add(kind.value)
+    assert enqueued, "没有扫到任何 enqueue 调用，扫描逻辑本身失效了"
+    assert enqueued <= JOB_KINDS, f"排队的种类没有处理器：{sorted(enqueued - JOB_KINDS)}"
+
+
+def test_compose_wires_every_tunable_setting():
+    """文档把采集窗口与限速列为可调参数；不传进容器，运维就只能重建镜像改默认值。"""
+    import yaml
+
+    from quant_platform.config import Settings
+
+    base = yaml.safe_load((Path(__file__).parents[1] / "deploy" / "compose.yaml").read_text())
+    wired = {
+        name
+        for service in base["services"].values()
+        for name in (service.get("environment") or {})
+    }
+    # 不经环境变量是有意的：凭据走 secrets 挂载，容器内路径由 Dockerfile ENV 固定，
+    # 部署形态由 Settings 校验锁定，接受运维覆盖就等于放弃这些不变量。
+    deliberate = {
+        "QUANT_DATABASE_URL",
+        "QUANT_DATABASE_URL_FILE",
+        "QUANT_API_TOKEN",
+        "QUANT_API_TOKEN_FILE",
+        "QUANT_ARTIFACT_ROOT",
+        "QUANT_BACKUP_ROOT",
+        "QUANT_PROVIDER",
+        "QUANT_ENVIRONMENT",
+        "QUANT_QLIB_ENABLED",
+    }
+    missing = {
+        "QUANT_" + name.upper()
+        for name in Settings.model_fields
+        if "QUANT_" + name.upper() not in wired | deliberate
+    }
+    assert missing == set(), f"compose 没有把 {sorted(missing)} 传给容器"
 
 
 def test_dockerignore_excludes_secrets_and_runtime():

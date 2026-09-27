@@ -1,7 +1,7 @@
 CREATE TABLE settings (key text PRIMARY KEY, value jsonb NOT NULL, revision integer NOT NULL DEFAULT 1);
 CREATE TABLE instruments (
  symbol text PRIMARY KEY, name text NOT NULL, board text NOT NULL, exchange text NOT NULL,
- list_date date NOT NULL, delist_date date, status text NOT NULL, data jsonb NOT NULL, fetched_at timestamptz NOT NULL
+ list_date date, delist_date date, status text NOT NULL, data jsonb NOT NULL, fetched_at timestamptz NOT NULL
 );
 CREATE TABLE calendars (
  exchange text NOT NULL, day date NOT NULL, is_open boolean NOT NULL, fetched_at timestamptz NOT NULL,

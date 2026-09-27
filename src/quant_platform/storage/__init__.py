@@ -194,7 +194,7 @@ class Database:
             return previous["id"]
         return conn.execute(
             "INSERT INTO datasets(endpoint,scope,content_hash,quality,metadata) VALUES(%s,%s,%s,%s,%s) RETURNING id",
-            (endpoint, scope, content_hash, quality, jsonb({"provider": "tushare", **metadata})),
+            (endpoint, scope, content_hash, quality, jsonb({"provider": "market", **metadata})),
         ).fetchone()["id"]
 
     def history(self, code, as_of, limit=500, watermark=None):

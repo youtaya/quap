@@ -26,7 +26,6 @@ def fixture_worker(role):
     """Test-only injection stays in the mounted tests, never in the production package."""
     from quant_platform.jobs import analyze, collect, scheduler
     from quant_platform.jobs.worker import Worker
-    from quant_platform.providers import PermissionDenied
 
     settings = Settings()
     if os.getenv("QUANT_DOCKER_SMOKE") != "1" or settings.environment != "test":
@@ -38,8 +37,26 @@ def fixture_worker(role):
         module.now = lambda: at
 
     class Feed:
+        """In-process stand-in for the tokenless public market provider; no network is touched."""
+
+        name = "public-market"
+
         def __init__(self, config):
             self.settings = config
+            self.last_sources = {}
+
+        @staticmethod
+        def _bar(day):
+            return {
+                "day": day,
+                "open": 10.0,
+                "high": 11.0,
+                "low": 9.0,
+                "close": 10.0,
+                "pre_close": 10.0,
+                "volume": 1000000,
+                "turnover": 30000000,
+            }
 
         def securities(self):
             return {
@@ -53,44 +70,85 @@ def fixture_worker(role):
                 }
             }
 
-        def request(self, endpoint, params, **kwargs):
-            if endpoint != "trade_cal":
-                raise PermissionDenied("Optional fixture capability is not enabled")
-            start, end = (datetime.strptime(params[key], "%Y%m%d").date() for key in ("start_date", "end_date"))
+        def constituents(self):
+            return {"SH600895"}
+
+        def calendar(self, start, end):
+            calendars = {"SSE": {}, "SZSE": {}}
+            cursor = start
+            while cursor <= end:
+                for days in calendars.values():
+                    days[cursor] = cursor.weekday() < 5
+                cursor += timedelta(days=1)
+            return calendars
+
+        def history(self, code, start, end, limit=4000):
+            bars, factors, cursor = [], {}, start
+            while cursor <= end:
+                if cursor.weekday() < 5:
+                    bars.append(self._bar(cursor))
+                    factors[cursor] = 1.0
+                cursor += timedelta(days=1)
+            self.last_sources["history"] = "eastmoney"
+            return {
+                "symbol": code,
+                "source": "eastmoney",
+                "factor_source": "eastmoney",
+                "bars": bars,
+                "factors": factors,
+            }
+
+        def benchmark(self, start, end):
+            return self.history("SH000300", start, end)
+
+        def quotes(self, codes):
+            self.last_sources["quotes"] = "eastmoney"
             return [
                 {
-                    "exchange": params["exchange"],
-                    "cal_date": (start + timedelta(days=i)).strftime("%Y%m%d"),
-                    "is_open": 1,
+                    "symbol": code,
+                    "name": "Fixture",
+                    "open": 10.0,
+                    "high": 11.0,
+                    "low": 9.5,
+                    "close": 10.5,
+                    "pre_close": 10.0,
+                    "volume": 1000000,
+                    "turnover": 30000000,
+                    "source_time": at.strftime("%Y-%m-%d %H:%M:%S"),
+                    "received_at": at.isoformat(),
+                    "reference_verified": False,
+                    "quality": "dated",
                 }
-                for i in range((end - start).days + 1)
+                for code in codes
             ]
 
-        def daily_partition(self, endpoint, day, codes, job=None):
+        def constraints(self, day, closes, names=None):
             return [
                 {
                     "symbol": code,
                     "day": day,
-                    **(
-                        {"factor": 1}
-                        if endpoint == "adj_factor"
-                        else {"open": 10, "close": 10, "high": 11, "low": 9, "volume": 1000000, "turnover": 30000000}
-                    ),
+                    "limit_up": 11.0,
+                    "limit_down": 9.0,
+                    "suspended": False,
+                    "derived": True,
+                    "limit_source": "previous_close_rule",
                 }
-                for code in sorted(codes)
+                for code in sorted(closes)
             ]
 
-        def quotes(self, codes):
+        def security_history(self, code, name, observed_at=None):
+            moment = observed_at or at
             return [
                 {
                     "symbol": code,
-                    "close": 10.5,
-                    "pre_close": 10,
-                    "source_time": at.isoformat(),
-                    "received_at": at.isoformat(),
-                    "reference_verified": False,
+                    "name": name or "Fixture",
+                    "start": str(moment.date()),
+                    "end": None,
+                    "risk_warning": False,
+                    "observed": True,
+                    "announcement_verified": True,
+                    "available_at": moment.replace(hour=15, minute=0, second=0, microsecond=0),
                 }
-                for code in codes
             ]
 
         def close(self):
@@ -143,9 +201,9 @@ def main():
         **os.environ,
         "QUANT_DATABASE_URL": source_dsn,
         "QUANT_API_TOKEN": settings.api_token.get_secret_value(),
-        "QUANT_TUSHARE_TOKEN": "",
         "QUANT_ENVIRONMENT": "test",
         "QUANT_HISTORY_SESSIONS": "120",
+        "QUANT_HISTORY_SCOPE": "all",
         "QUANT_SMOKE_AT": fixture_at.isoformat(),
         "QUANT_ARTIFACT_ROOT": str(settings.artifact_root),
         "QUANT_BACKUP_ROOT": str(settings.backup_root),

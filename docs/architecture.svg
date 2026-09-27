@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 1430" role="img" aria-labelledby="title desc">
   <title id="title">QUAP — Required Qlib Research and Recommendation Pipeline</title>
-  <desc id="desc">Authorized Tushare daily and minute data become validated immutable Qlib generations. Separate Qlib workers train, evaluate, and infer with a shared target-weight strategy. PostgreSQL stores run dependencies, release approvals, provenance, and human model-portfolio decisions. Missing Qlib prerequisites block recommendations. Backups include database and referenced artifacts. An opt-in research profile adds isolated adata snapshots, safe factor experiments with explicit freeze, and asynchronous mature-label diagnostics. Supplemental data never enters canonical training or release gates. Production qualification remains separate from fixture tests.</desc>
+  <desc id="desc">Tokenless public A-share sources — TDX (pytdx), Eastmoney, Sina, Tencent — are tried in that degradation order, and the source that actually answered is recorded. Validated daily and minute data become immutable Qlib generations. Separate Qlib workers train, evaluate, infer, and publish a descriptive research report with a shared target-weight strategy. PostgreSQL stores run dependencies, release approvals, provenance, and human model-portfolio decisions. Missing Qlib prerequisites block recommendations. Backups include database and referenced artifacts. An opt-in research profile adds isolated adata snapshots, safe factor experiments with explicit freeze, and asynchronous mature-label diagnostics. Supplemental data never enters canonical training or release gates. Production qualification remains separate from fixture tests.</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#49617c"/></marker>
     <style>
@@ -28,14 +28,14 @@
   <rect x="390" y="120" width="280" height="105" class="box"/>
   <text x="410" y="153" class="label">Streamlit dashboard</text>
   <text x="410" y="180" class="body">API-only client · token login</text>
-  <text x="410" y="205" class="small">Six workspaces · loopback :8501</text>
+  <text x="410" y="205" class="small">Seven workspaces · loopback :8501</text>
   <rect x="750" y="120" width="300" height="105" class="box"/>
   <text x="770" y="153" class="label">FastAPI /api/v1</text>
   <text x="770" y="180" class="body">Intent · run graph · provenance</text>
   <text x="770" y="205" class="small">Host loopback :8000</text>
   <rect x="1130" y="120" width="270" height="105" class="box"/>
   <text x="1150" y="153" class="label">Private secret files</text>
-  <text x="1150" y="180" class="body">DB / operator / provider tokens</text>
+  <text x="1150" y="180" class="body">DB / operator tokens</text>
   <text x="1150" y="205" class="small">Mounted read-only; not in images</text>
   <path d="M300 174H390" class="edge"/>
   <path d="M670 174H750" class="edge"/>
@@ -45,12 +45,12 @@
   <text x="385" y="321" class="small">Private network · non-root application containers · persistent volumes · restart supervision</text>
 
   <rect x="40" y="360" width="280" height="180" class="box"/>
-  <text x="60" y="394" class="label">Tushare Pro</text>
-  <text x="60" y="423" class="body">stock_basic · trade_cal</text>
-  <text x="60" y="450" class="body">daily · adj_factor · rt_k</text>
-  <text x="60" y="477" class="small">Benchmark · dated risk / limits</text>
-  <text x="60" y="501" class="small">stk_mins · rt_min · rt_min_daily</text>
-  <text x="60" y="523" class="small">No public or synthetic fallback</text>
+  <text x="60" y="394" class="label">Public A-share sources</text>
+  <text x="60" y="423" class="body">TDX → Eastmoney → Sina → Tencent</text>
+  <text x="60" y="450" class="body">securities · calendar · history</text>
+  <text x="60" y="477" class="small">factors · benchmark · quotes · minutes</text>
+  <text x="60" y="501" class="small">Derived limits · observed risk states</text>
+  <text x="60" y="523" class="small">Tokenless · source recorded · no synthetic fallback</text>
 
   <rect x="400" y="365" width="280" height="120" class="worker"/>
   <text x="420" y="398" class="label">Daily / minute collection</text>
@@ -91,7 +91,7 @@
   <text x="600" y="709" class="small">DB claims / fenced publication / reads · no browser-owned workers</text>
 
   <rect x="480" y="735" width="780" height="110" rx="14" fill="#173f65"/>
-  <text x="505" y="771" style="fill:white;font-size:22px;font-weight:700">PostgreSQL 16 · durable jobs · schema 0008</text>
+  <text x="505" y="771" style="fill:white;font-size:22px;font-weight:700">PostgreSQL 16 · durable jobs · schema 0010</text>
   <text x="505" y="802" style="fill:#e0ecf6;font-size:15px">Canonical data · run dependencies · model releases · recommendations · portfolio revisions</text>
   <text x="505" y="828" style="fill:#e0ecf6;font-size:14px">At-least-once delivery · idempotent effects · renewable leases · fencing tokens</text>
   <path d="M900 225V245H1383V790H1260" class="edge"/>
@@ -108,7 +108,7 @@
   <rect x="40" y="920" width="850" height="90" rx="12" fill="#fff7e8" stroke="#e0c48e"/>
   <text x="60" y="950" class="label">Safety boundary</text>
   <text x="60" y="976" class="body">No balances or executable quantities · acceptance changes model targets only · no native fallback</text>
-  <text x="60" y="999" class="small">Implementation / fixtures are not production qualification. Verify real permissions, shadow sessions and capacity.</text>
+  <text x="60" y="999" class="small">Implementation / fixtures are not production qualification. Verify live source reachability, shadow sessions and capacity.</text>
   <rect x="940" y="920" width="460" height="90" class="engine"/>
   <text x="960" y="950" class="label">Qlib generations / models / recorders</text>
   <text x="960" y="975" class="small">Checksummed · reference-aware retention</text>
@@ -146,6 +146,6 @@
   <text x="1000" y="1281" class="small">Missing evidence stays unavailable; no target changes</text>
   <text x="1000" y="1306" class="small">Outside live inference deadline · 2 CPUs / 4 GiB</text>
 
-  <text x="40" y="1355" class="body">API-only panels: Data &amp; Pipeline · Models &amp; Validation · Stock Research · no experimental Accept action</text>
+  <text x="40" y="1355" class="body">API-only panels: Data &amp; Pipeline · Models &amp; Validation · Stock Research · Qlib Report (IC / quantiles / book) · no experimental Accept action</text>
   <text x="40" y="1382" class="small">Deferred stage: RD-Agent / multi-agent reports need separate sandbox, endpoint, data-egress, and spending approval. No paid LLM calls here.</text>
 </svg>

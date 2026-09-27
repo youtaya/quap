@@ -19,7 +19,7 @@ def no_external_http(monkeypatch):
 
 @pytest.fixture
 def settings():
-    return Settings(api_token="a" * 32, tushare_token="test-only-fixture", environment="test")
+    return Settings(api_token="a" * 32, environment="test")
 
 
 @pytest.fixture(scope="session")
@@ -40,8 +40,11 @@ def db(postgres_url):
     database = Database(postgres_url)
     with database.transaction() as conn:
         tables = conn.execute(
-            "SELECT tablename FROM pg_tables t WHERE schemaname='public' AND tablename!='alembic_version' "
-            "AND NOT EXISTS(SELECT 1 FROM pg_inherits i WHERE i.inhrelid=('public.' || t.tablename)::regclass)"
+            # 直接读 pg_class/pg_namespace：pg_tables 视图里的 ('public.'||tablename)::regclass
+            # 会被计划器下推到未过滤的目录行，一旦它对 pg_catalog 的表求值就整条查询报错。
+            "SELECT c.relname AS tablename FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
+            "WHERE n.nspname='public' AND c.relkind IN ('r','p') AND c.relname!='alembic_version' "
+            "AND NOT EXISTS(SELECT 1 FROM pg_inherits i WHERE i.inhrelid=c.oid)"
         ).fetchall()
         conn.execute(
             sql.SQL("TRUNCATE {} RESTART IDENTITY CASCADE").format(

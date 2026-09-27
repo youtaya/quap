@@ -12,12 +12,24 @@ x-app: &app
   environment: &environment
     QUANT_DATABASE_URL_FILE: /run/secrets/database_url
     QUANT_API_TOKEN_FILE: /run/secrets/api_token
-    QUANT_TUSHARE_TOKEN_FILE: /run/secrets/tushare_token
     QUANT_TRAINING_DEADLINE_SECONDS: ${QUANT_TRAINING_DEADLINE_SECONDS:-21600}
     QUANT_DATA_DEADLINE_SECONDS: ${QUANT_DATA_DEADLINE_SECONDS:-7200}
+    QUANT_INFERENCE_DEADLINE_SECONDS: ${QUANT_INFERENCE_DEADLINE_SECONDS:-120}
     QUANT_OBSERVATION_ROOT: /data/observations
+    QUANT_HISTORY_SCOPE: ${QUANT_HISTORY_SCOPE:-index}
     QUANT_RESEARCH_DATA_ENABLED: ${QUANT_RESEARCH_DATA_ENABLED:-false}
-  secrets: [database_url, api_token, tushare_token]
+    # 采集窗口与限速是文档承诺可调的运维参数；不传进容器就只能靠重建镜像改默认值。
+    QUANT_HISTORY_SESSIONS: ${QUANT_HISTORY_SESSIONS:-1500}
+    QUANT_FACTOR_SESSIONS: ${QUANT_FACTOR_SESSIONS:-500}
+    QUANT_MINUTE_HISTORY_SESSIONS: ${QUANT_MINUTE_HISTORY_SESSIONS:-252}
+    QUANT_INTRADAY_POOL_CAPACITY: ${QUANT_INTRADAY_POOL_CAPACITY:-300}
+    QUANT_QUOTE_SECONDS: ${QUANT_QUOTE_SECONDS:-30}
+    QUANT_REALTIME_RPM: ${QUANT_REALTIME_RPM:-40}
+    QUANT_ORDINARY_RPM: ${QUANT_ORDINARY_RPM:-20}
+    QUANT_DAILY_QUOTA: ${QUANT_DAILY_QUOTA:-8000}
+    QUANT_MINUTE_RPM: ${QUANT_MINUTE_RPM:-40}
+    QUANT_MINUTE_DAILY_QUOTA: ${QUANT_MINUTE_DAILY_QUOTA:-8000}
+  secrets: [database_url, api_token]
   volumes: [artifacts:/data/artifacts, observations:/data/observations]
   depends_on:
     migrate: {condition: service_completed_successfully}
@@ -108,6 +120,10 @@ services:
   operations:
     <<: *app
     command: [worker, --role, operations]
+    environment:
+      <<: *environment
+      # 副本目录必须与主备份不同；留空则只保留主备份，不会伪装成异地恢复。
+      QUANT_BACKUP_REPLICA_ROOT: ${QUANT_BACKUP_REPLICA_ROOT:-}
     volumes:
       - artifacts:/data/artifacts
       - observations:/data/observations
@@ -204,6 +220,10 @@ services:
     environment:
       QUANT_DATABASE_URL_FILE: /run/secrets/database_url
       QUANT_RESEARCH_DATA_ENABLED: ${QUANT_RESEARCH_DATA_ENABLED:-false}
+      QUANT_RESEARCH_RPM: ${QUANT_RESEARCH_RPM:-10}
+      QUANT_RESEARCH_ATTEMPTS: ${QUANT_RESEARCH_ATTEMPTS:-3}
+      QUANT_RESEARCH_REQUEST_DEADLINE_SECONDS: ${QUANT_RESEARCH_REQUEST_DEADLINE_SECONDS:-60}
+      QUANT_RESEARCH_RESPONSE_BYTES: ${QUANT_RESEARCH_RESPONSE_BYTES:-8388608}
     secrets: [database_url]
     mem_limit: 2g
     cpus: 1
@@ -253,4 +273,3 @@ secrets:
   postgres_password: {file: ./secrets/postgres_password}
   database_url: {file: ./secrets/database_url}
   api_token: {file: ./secrets/api_token}
-  tushare_token: {file: ./secrets/tushare_token}

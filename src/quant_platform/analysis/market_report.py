@@ -77,7 +77,11 @@ def load_inputs(db, as_of, lookback_sessions=260):
     )
     constraints = db.rows(
         "SELECT DISTINCT ON (symbol) symbol,dataset_id,data->>'limit_up' AS limit_up,"
-        "data->>'limit_down' AS limit_down,data->>'suspended' AS suspended FROM market_constraints "
+        "data->>'limit_down' AS limit_down,data->>'suspended' AS suspended,"
+        # 停牌没有免令牌来源（见 ``Market.constraints``），存的是 JSON null。`->>` 对 null 返回
+        # SQL NULL，对真实布尔返回 'true'/'false'，所以这一列才是「有没有一个可信的停牌标记」，
+        # 而不是「有没有约束记录」。报告据此区分「0 只停牌」与「停牌数未知」。
+        "data->>'suspended' IS NOT NULL AS suspended_known FROM market_constraints "
         "WHERE day=%s ORDER BY symbol,dataset_id DESC",
         (days[-1] if days else as_of,),
     )
@@ -324,7 +328,8 @@ def _breadth_section(raw, adjusted, constraints, t):
         joined = constraints.reindex(close_t.index)
         section["limit_up"] = _count(close_t >= joined["limit_up"])
         section["limit_down"] = _count(close_t <= joined["limit_down"])
-        section["suspended"] = _count(joined["suspended"])
+        # 与 ``_risk_section`` 同口径：没有可信的停牌标记时报未知，而不是报 0。
+        section["suspended"] = _count(joined["suspended"]) if _suspension_known(constraints) else None
     return section
 
 
@@ -443,10 +448,25 @@ def _composite_section(snapshot, instruments, raw_close_t):
     }
 
 
+def _suspension_known(constraints):
+    """Whether the constraint rows carry a suspension flag a source actually published.
+
+    停牌没有免令牌来源（见 ``Market.constraints``），所以存进去的是 JSON null。于是「一只都没停牌」
+    和「没人知道有没有停牌」在计数上都是 0，必须靠 ``suspended_known`` 标记列区分，而不是靠计数。
+    没有标记列的帧是旧夹具，按旧口径处理。
+    """
+    if constraints.empty:
+        return False
+    if "suspended_known" not in constraints.columns:
+        return True
+    return bool(constraints["suspended_known"].fillna(False).any())
+
+
 def _risk_section(instruments, constraints, raw_close, days, names):
     flagged = instruments[instruments["name"].fillna("").str.contains("ST|退", regex=True)]
     warnings = [{"symbol": r.symbol, "name": r.name} for r in flagged.itertuples()]
     suspended = []
+    known = _suspension_known(constraints)
     if not constraints.empty:
         suspended = [{"symbol": s, "name": names.get(s)} for s in constraints.index[constraints["suspended"]]]
     young = None
@@ -458,9 +478,9 @@ def _risk_section(instruments, constraints, raw_close, days, names):
     return {
         "risk_warning_names": {"count": len(warnings), "items": warnings[:LIST_LIMIT]},
         "suspended": {
-            "count": len(suspended) if not constraints.empty else None,
+            "count": len(suspended) if known else None,
             "items": suspended[:LIST_LIMIT],
-            "available": not constraints.empty,
+            "available": known,
         },
         "young_listings": {
             "count": len(young) if young is not None else None,

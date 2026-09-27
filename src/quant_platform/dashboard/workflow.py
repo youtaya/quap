@@ -12,11 +12,21 @@ from quant_platform.domain import CN, digest, symbol
 from quant_platform.domain.workflow import PortfolioInput, ScanPolicy
 
 MARKET_REPORT_DISCLAIMER = "本报告为描述性量化统计，不构成投资建议，也不是模型推荐或目标权重。"
+QLIB_REPORT_DISCLAIMER = "Qlib 研究报告为描述性统计，不构成投资建议，也不是目标权重；平台不执行交易。"
+
+
+def _decimal(value, digits=4):
+    return "—" if value is None else f"{value:.{digits}f}"
+
+
+def _percent(value):
+    return "—" if value is None else f"{value * 100:.2f}%"
 
 WORKSPACES = {
     "Overview": "Are daily and five-minute recommendations ready?",
     "My Model Portfolio": "Review baseline weights and cash, then accept versioned Qlib proposals.",
     "Stock Research": "Inspect model views and prices without implying brokerage holdings.",
+    "Qlib Report": "Factor IC, forward-return quantiles and the benchmark-relative equal-weight book.",
     "Low-Price Scan": "Rank low nominal-price stocks using Qlib predictions, not cheapness.",
     "Models & Validation": "Inspect evaluation and shadow evidence before a manual release decision.",
     "Data & Pipeline": "Trace prerequisites, immutable generations, dependencies, and scoped retries.",
@@ -248,6 +258,74 @@ def market_report(call, table, local_time):
         st.json(report)
 
 
+def qlib_report(call, table, local_time):
+    """Rendered Qlib research evidence: IC, quantiles and the benchmark-relative book."""
+    st.warning(QLIB_REPORT_DISCLAIMER)
+    current = call("GET", "/qlib-report")
+    if not isinstance(current, dict) or not current.get("report"):
+        st.info("尚无 Qlib 研究报告。日报数据就绪并完成一次不可变代次导出后，系统会自动排队报告任务。")
+        return
+    summary = current.get("summary") or {}
+    book = summary.get("book") or {}
+    st.caption(
+        f"报告 #{current.get('report_id')} · 数据日期 {current.get('as_of')} · 基准 {current.get('target')} · "
+        f"引擎 {current.get('engine')}"
+    )
+    daily = summary.get("daily_ic") or {}
+    columns = st.columns(5)
+    columns[0].metric("IC", _decimal(summary.get("ic")))
+    columns[1].metric("Rank IC", _decimal(summary.get("rank_ic")))
+    columns[2].metric("日均 IC", _decimal(daily.get("mean")))
+    columns[3].metric("相对基准收益", _percent(book.get("relative_return")))
+    columns[4].metric("有效样本", f"{summary.get('samples') or 0:,}")
+
+    st.subheader("五分位平均未来 5 日收益")
+    quantiles = summary.get("quantiles") or []
+    if quantiles:
+        st.bar_chart(
+            pd.DataFrame(
+                [{"分位": f"Q{row['bucket'] + 1}", "平均未来收益": row["mean_forward"]} for row in quantiles]
+            ).set_index("分位")
+        )
+        table(
+            [{"bucket": f"Q{row['bucket'] + 1}", **row} for row in quantiles],
+            columns=["bucket", "count", "mean_forward"],
+        )
+    else:
+        st.info("样本不足，无法分层。")
+
+    st.subheader("相对基准的等权组合")
+    if book.get("status") == "complete":
+        st.caption(
+            f"每 20 个交易日再平衡，取动量前 30 只等权；已扣除佣金、印花税与滑点。调仓 {book['rebalances']} 次，"
+            f"平均单边换手 {_percent(book.get('mean_turnover'))}。"
+        )
+        comparison = pd.DataFrame(
+            {
+                "累计收益": {
+                    "组合（扣费）": book.get("cumulative_return"),
+                    f"基准 {current.get('target')}": book.get("benchmark_cumulative_return"),
+                }
+            }
+        )
+        st.bar_chart(comparison)
+        rows = current["report"].get("book", {}).get("periods", [])
+        # The book reuses `turnover` for the one-sided portfolio turnover ratio, while the field
+        # means CNY traded value everywhere else, so it is relabelled here instead of in LABELS.
+        table(
+            rows,
+            columns=["day", "next_day", "holdings", "net_return", "benchmark_return", "turnover"],
+            labels={"turnover": "单边换手"},
+        )
+    else:
+        st.info("历史长度不足以完成一次完整调仓，组合收益未计算。")
+    if current.get("markdown"):
+        with st.expander("Markdown 报告"):
+            st.markdown(current["markdown"])
+    with st.expander("原始报告 JSON"):
+        st.json(current["report"])
+
+
 def stocks(call, table, local_time):
     search = st.text_input("Search stocks", max_chars=120)
     table(call("GET", "/instruments?search=" + quote(search.strip(), safe="")))
@@ -453,7 +531,10 @@ def pipeline(call, table, operations):
             if result is not None:
                 st.success("Retry requested. Changed inputs require a new run.")
     with st.expander("Immutable Qlib generations"):
-        table(call("GET", "/qlib-generations"))
+        table(
+            call("GET", "/qlib-generations"),
+            columns=["id", "frequency", "origin", "watermark", "as_of", "contract", "path", "created_at"],
+        )
     with st.expander("Collection, permissions, jobs, and recovery"):
         operations()
     with st.expander("Legacy native reports · read-only archive"):
@@ -487,6 +568,8 @@ def render(page, call, table, local_time, operations):
             market_report(call, table, local_time)
         with model_tab:
             stocks(call, table, local_time)
+    elif page == "Qlib Report":
+        qlib_report(call, table, local_time)
     elif page == "Low-Price Scan":
         scan(call, table, local_time)
     elif page == "Models & Validation":

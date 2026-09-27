@@ -165,7 +165,10 @@ def realized_quality(db, prediction, observation):
     for code in codes:
         start, end = daily.get((code, entry.date())), daily.get((code, exit_at.date()))
         states = [constraints.get((code, day)) for day in {entry.date(), exit_at.date()}]
-        if any(not state or state.get("suspended", True) for state in states):
+        # 停牌没有免令牌来源（见 ``Market.constraints``），存的是 null，所以这里不再把「字段值不是
+        # 真」当成停牌 —— 那会把「不知道」和「没停牌」混为一谈。只有约束记录本身缺失，或上游明确
+        # 报出停牌，才算不可用；真正的停牌由下面的成交量判定。
+        if any(not state for state in states) or any(state.get("suspended") is True for state in states):
             exclusions[code] = "suspended_or_constraints_unavailable"
             continue
         if not start or not end:

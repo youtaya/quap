@@ -143,7 +143,7 @@ def create_experiment(db, settings, value):
             if (
                 not generation
                 or generation["contract"] != DATA_CONTRACT
-                or generation["manifest"].get("source") != "tushare"
+                or generation["manifest"].get("source") != "market"
             ):
                 raise PipelineBlocked(
                     "Experiments require a qualified canonical Qlib generation, never supplemental snapshots."

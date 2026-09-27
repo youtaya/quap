@@ -1,6 +1,6 @@
 """Real PostgreSQL regressions for recovery, durable controls and data gates."""
 
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 from unittest.mock import Mock
 
 import pytest
@@ -11,12 +11,10 @@ from quant_platform.domain import CN, BasketInput, now
 from quant_platform.jobs.scheduler import tick
 from quant_platform.jobs.worker import Worker
 from quant_platform.operations import board_status, doctor, maintenance, qualification
-from quant_platform.providers import Deferred, PermissionDenied
-from quant_platform.providers.tushare import Tushare
+from quant_platform.providers import Deferred, ProviderError
 from quant_platform.storage import jsonb
 from quant_platform.storage.baskets import Conflict, save_basket
 from test_postgres import seed
-from test_provider import row
 
 pytestmark = pytest.mark.postgres
 
@@ -28,7 +26,7 @@ def job(db, kind, queue="test", payload=None):
 
 
 def test_quota_deferrals_do_not_exhaust_failure_budget(db):
-    item = job(db, "daily")
+    item = job(db, "history")
     for _ in range(12):
         db.defer(item, "quota", delay=0, transient=True)
         item = db.claim("test", "test-owner")
@@ -77,8 +75,31 @@ def test_scheduler_terminal_quotes_do_not_stop_next_cycle(db, settings):
     tick(db, settings, at)
     tick(db, settings, at)
     assert len(db.rows("SELECT * FROM jobs WHERE queue='quotes' AND status='pending'")) == 1
-    daily = db.rows("SELECT payload FROM jobs WHERE kind='daily'")
-    assert all(r["payload"]["day"] < str(day) for r in daily), "No unfinished current-day history"
+    daily = db.rows("SELECT payload FROM jobs WHERE kind='history'")
+    assert all(r["payload"]["end"] < str(day) for r in daily), "No unfinished current-day history"
+
+
+def test_scheduler_collects_a_lead_in_session_so_limits_are_derivable(db, settings):
+    """窗口内最早一天的价格限制要用它前一天的收盘，而那一天落在分析窗口之外。
+
+    采集窗口因此必须比分析窗口多一个会话；少了它，最早一天的 `constraints` 永远推不出来，准入
+    判定永远不成立。lead-in 只提供一根收盘价，不进分析窗口，也不要求它自己的限制。
+    """
+    day = seed(db)
+    settings.history_sessions = 30
+    sessions = [day - timedelta(days=index) for index in range(31)]
+    at = datetime.combine(day, time(19), CN)
+    with db.transaction() as conn:
+        conn.execute("DELETE FROM calendars")
+        for session in sessions:
+            for exchange in ("SSE", "SZSE"):
+                conn.execute("INSERT INTO calendars VALUES(%s,%s,true,now())", (exchange, session))
+        db.set_setting(conn, "directory", {"fetched_at": at.isoformat()})
+    tick(db, settings, at)
+    payload = db.rows("SELECT payload FROM jobs WHERE kind='history'")[0]["payload"]
+    assert payload == {"start": str(sessions[-1]), "end": str(sessions[0])}
+    scopes = {row["payload"]["day"] for row in db.rows("SELECT payload FROM jobs WHERE kind='constraints'")}
+    assert scopes == {str(session) for session in sessions[:30]}, "lead-in 不进分析窗口"
 
 
 def test_blocked_capability_prevents_new_quote_work(db, settings):
@@ -86,39 +107,292 @@ def test_blocked_capability_prevents_new_quote_work(db, settings):
     at = datetime.combine(day, datetime.min.time(), CN).replace(hour=10)
     with db.transaction() as conn:
         db.set_setting(conn, "directory", {"fetched_at": at.isoformat()})
-    db.capability("rt_k", "blocked", {})
+    db.capability("quotes", "blocked", {})
     tick(db, settings, at)
     assert not db.rows("SELECT * FROM jobs WHERE kind='quotes'")
 
 
-def test_cap_split_resumes_after_quota_wait(db, settings, monkeypatch):
-    item = job(db, "daily")
-    feed = Tushare(settings, db)
-    calls = []
+def provider_bars(rows):
+    """A provider bar always carries a previous close; the shared fixture stores only session values."""
+    bars, previous = [], None
+    for row in rows:
+        bars.append({"day": row["day"], "pre_close": previous or row["data"]["open"], **row["data"]})
+        previous = row["data"]["close"]
+    return bars
 
-    def request(endpoint, params):
-        calls.append(params.get("ts_code"))
-        if "ts_code" not in params:
-            return [row()] * 6000
-        if params["ts_code"] == "000001.SZ":
-            raise Deferred("quota")
-        return [row(params["ts_code"])]
 
-    monkeypatch.setattr(feed, "request", request)
-    day = datetime(2026, 9, 21).date()
+def test_partial_history_is_recorded_and_repair_is_bounded(db, settings, history_rows):
+    """One source failing for one security is a recorded gap, never a fabricated suspension."""
+    from quant_platform.jobs.collect import history
+
+    target, rows = seed_analysis(db, history_rows)
+    settings.history_scope = "all"
+    with db.transaction() as conn:
+        conn.execute(
+            "INSERT INTO instruments VALUES('SZ000001','Fixture 2','Main Board','SZSE',%s,NULL,'L','{}',now())",
+            (target - timedelta(days=500),),
+        )
+    feed = Mock()
+    feed.settings, feed.db = settings, None
+    attempted = []
+
+    def fetch(code, start, end):
+        attempted.append(code)
+        if code == "SZ000001":
+            raise ProviderError("no source served this security")
+        return {
+            "symbol": code,
+            "source": "eastmoney",
+            "factor_source": "eastmoney",
+            "bars": provider_bars(rows),
+            "factors": {r["day"]: 1 for r in rows},
+        }
+
+    feed.history.side_effect = fetch
+    history(db, feed, job(db, "history", payload={"start": str(rows[0]["day"]), "end": str(target)}))
+    assert attempted == ["SH600895", "SZ000001"]
+    dataset = db.rows("SELECT quality,metadata FROM datasets WHERE endpoint='history' ORDER BY id DESC LIMIT 1")[0]
+    assert dataset["quality"] == "partial"
+    assert dataset["metadata"]["missing_bars"] == ["SZ000001"]
+    assert dataset["metadata"]["failures"] == {"SZ000001": "ProviderError"}
+    assert dataset["metadata"]["factors_only"] is False
+    repair = db.rows("SELECT payload,available_at FROM jobs WHERE strpos(dedupe,'repair:')=1")
+    assert len(repair) == 1 and repair[0]["payload"]["repair"] == 0
+    assert repair[0]["available_at"] > now(), "A round with progress still queues the remainder"
+
+
+def test_history_repair_budget_is_spent_only_by_a_round_without_progress(db, settings, history_rows):
+    """A long backfill is a continuation, not a failure; a round that completes nothing is the failure."""
+    from quant_platform.jobs.collect import history
+
+    target, rows = seed_analysis(db, history_rows)
+    settings.history_scope = "all"
+    with db.transaction() as conn:
+        # 该会话没有任何因子，所以这一轮即使拿到了 K 线也不会让任何证券变「完成」。
+        conn.execute("DELETE FROM factors WHERE day=%s", (target,))
+    feed = Mock()
+    feed.settings, feed.db = settings, None
+    feed.history.side_effect = lambda code, start, end: {
+        "symbol": code,
+        "source": "sina",
+        "factor_source": None,
+        "bars": provider_bars(rows),
+        "factors": {},
+    }
+    history(db, feed, job(db, "history", payload={"start": str(rows[0]["day"]), "end": str(target)}))
+    assert db.rows("SELECT 1 FROM datasets WHERE endpoint='history' AND scope=%s", (str(target),))
+    repair = db.rows("SELECT payload FROM jobs WHERE strpos(dedupe,'repair:')=1")
+    assert [r["payload"]["repair"] for r in repair] == [1], "Bars without a factor complete nothing"
+
+
+def test_history_stops_where_the_source_budget_defers_the_rest(db, settings, history_rows):
+    """The per-source budget is a minute window; draining the list first wastes the whole round."""
+    from quant_platform.jobs.collect import history
+
+    target, rows = seed_analysis(db, history_rows)
+    settings.history_scope = "all"
+    with db.transaction() as conn:
+        for index in range(3):
+            conn.execute(
+                "INSERT INTO instruments VALUES(%s,'Fixture %s','Main Board','SZSE',%s,NULL,'L','{}',now())",
+                (f"SZ00000{index + 2}", index, target - timedelta(days=500)),
+            )
+    feed = Mock()
+    feed.settings, feed.db = settings, None
+    attempted = []
+
+    def fetch(code, start, end):
+        attempted.append(code)
+        if len(attempted) > 1:
+            raise Deferred("Source quota exhausted; request deferred.")
+        return {
+            "symbol": code,
+            "source": "sina",
+            "factor_source": "sina",
+            "bars": provider_bars(rows),
+            "factors": {r["day"]: 1 for r in rows},
+        }
+
+    feed.history.side_effect = fetch
+    history(db, feed, job(db, "history", payload={"start": str(rows[0]["day"]), "end": str(target)}))
+    assert attempted == ["SH600895", "SZ000002"], "The round must stop at the first exhausted request"
+    repair = db.rows("SELECT payload,available_at,dedupe FROM jobs WHERE strpos(dedupe,'repair:')=1")
+    assert len(repair) == 1
+    assert repair[0]["payload"]["repair"] == 0, "Progress was made; the retry budget is untouched"
+    assert repair[0]["available_at"] - now() < timedelta(minutes=5), "Wait one quota window, not half an hour"
+    assert repair[0]["dedupe"].rsplit(":", 1)[-1].isdigit()
+
+
+def test_history_defers_the_job_when_the_budget_is_already_exhausted(db, settings, history_rows):
+    """Nothing fetched and no successor is right: the worker defers the same job with the same delay."""
+    from quant_platform.jobs.collect import history
+
+    target, rows = seed_analysis(db, history_rows)
+    settings.history_scope = "all"
+    feed = Mock()
+    feed.settings, feed.db = settings, None
+    feed.history.side_effect = Deferred("Source quota exhausted; request deferred.")
     with pytest.raises(Deferred):
-        feed.daily_partition("daily", day, {"SH600895", "SZ000001"}, job=item)
-    assert calls == [None, "600895.SH", "000001.SZ"]
-    calls.clear()
+        history(db, feed, job(db, "history", payload={"start": str(rows[0]["day"]), "end": str(target)}))
+    assert not db.rows("SELECT 1 FROM datasets WHERE endpoint='history' AND scope=%s", (str(target),))
+    assert not db.rows("SELECT 1 FROM jobs WHERE strpos(dedupe,'repair:')=1")
 
-    def resumed(endpoint, params):
-        calls.append(params["ts_code"])
-        return [row(params["ts_code"])]
 
-    monkeypatch.setattr(feed, "request", resumed)
-    result = feed.daily_partition("daily", day, {"SH600895", "SZ000001"}, job=item)
-    assert len(result) == 2 and calls == ["000001.SZ"]
-    feed.close()
+def test_history_completes_without_publishing_when_every_security_is_ready(db, settings, history_rows):
+    """A repeat of a finished window has nothing to write; it must still release the lease."""
+    from quant_platform.jobs.collect import history
+
+    target, rows = seed_analysis(db, history_rows)
+    settings.history_scope = "all"
+    feed = Mock()
+    feed.settings, feed.db = settings, None
+    feed.history.side_effect = lambda code, start, end: {
+        "symbol": code,
+        "source": "sina",
+        "factor_source": "sina",
+        "bars": provider_bars(rows),
+        "factors": {r["day"]: 1 for r in rows},
+    }
+    payload = {"start": str(rows[0]["day"]), "end": str(target)}
+    history(db, feed, job(db, "history", payload=payload))
+    feed.history.reset_mock()
+    repeat = job(db, "history", payload=payload)
+    history(db, feed, repeat)
+    feed.history.assert_not_called()
+    assert db.rows("SELECT status FROM jobs WHERE id=%s", (repeat["id"],))[0]["status"] == "complete"
+
+
+def test_widening_the_window_refetches_securities_that_already_hold_the_newest_session(db, settings, history_rows):
+    """窗口变宽（`history_sessions` 调大，或调度器补的 lead-in 会话）必须重取。
+
+    一次请求覆盖整个窗口，所以只看最新会话会把「请求从未触及新的第一天」误判成「这只证券已经
+    完成」。那样多出来的会话永远补不上，准入判定也就永远不成立。
+    """
+    from quant_platform.jobs.collect import history
+
+    target, rows = seed_analysis(db, history_rows)
+    settings.history_scope = "all"
+    lead_in = rows[0]["day"] - timedelta(days=1)
+    with db.transaction() as conn:
+        for exchange in ("SSE", "SZSE"):
+            conn.execute(
+                "INSERT INTO calendars VALUES(%s,%s,true,now()) ON CONFLICT DO NOTHING", (exchange, lead_in)
+            )
+    window_rows = [{**rows[0], "day": lead_in}] + rows
+    feed = Mock()
+    feed.settings, feed.db = settings, None
+    attempted = []
+
+    def fetch(code, start, end):
+        attempted.append((code, start))
+        served = [row for row in window_rows if start <= row["day"] <= end]
+        return {
+            "symbol": code,
+            "source": "tencent",
+            "factor_source": "tencent",
+            "bars": provider_bars(served),
+            "factors": {row["day"]: 1 for row in served},
+        }
+
+    feed.history.side_effect = fetch
+    history(db, feed, job(db, "history", payload={"start": str(rows[0]["day"]), "end": str(target)}))
+    assert attempted == [("SH600895", rows[0]["day"])]
+    assert not db.rows("SELECT 1 FROM datasets WHERE endpoint='history' AND scope=%s", (str(lead_in),))
+
+    attempted.clear()
+    wider = {"start": str(lead_in), "end": str(target)}
+    history(db, feed, job(db, "history", payload=wider))
+    assert attempted == [("SH600895", lead_in)], "窗口更宽时必须重取已持有最新会话的证券"
+    assert db.rows("SELECT 1 FROM datasets WHERE endpoint='history' AND scope=%s", (str(lead_in),))
+
+    attempted.clear()
+    history(db, feed, job(db, "history", payload=wider))
+    assert attempted == [], "窗口没变时不得重复抓取"
+
+
+def test_factors_only_refresh_never_publishes_an_open_session_bar(db, settings, history_rows, monkeypatch):
+    """The morning refresh writes today's factor but must not freeze a half-formed daily bar."""
+    from quant_platform.jobs import collect
+    from quant_platform.jobs.collect import history
+
+    target, rows = seed_analysis(db, history_rows)
+    settings.history_scope = "all"
+    today = now().astimezone(CN).date()
+    intraday = datetime.combine(today, time(10, 0), CN)
+    monkeypatch.setattr(collect, "now", lambda: intraday)
+    feed = Mock()
+    feed.settings, feed.db = settings, None
+    feed.history.side_effect = lambda code, start, end: {
+        "symbol": code,
+        "source": "sina",
+        "factor_source": "sina",
+        "bars": [{**provider_bars(rows)[-1], "day": today}],
+        "factors": {today: 0.8},
+    }
+    before = db.rows("SELECT count(*) AS n FROM daily_bars WHERE day=%s", (today,))[0]["n"]
+    history(db, feed, job(db, "factors", payload={"start": str(today), "end": str(today)}))
+    assert db.rows("SELECT count(*) AS n FROM daily_bars WHERE day=%s", (today,))[0]["n"] == before
+    assert db.rows("SELECT factor FROM factors WHERE symbol='SH600895' AND day=%s", (today,))[0]["factor"] == 0.8
+    dataset = db.rows("SELECT metadata FROM datasets WHERE endpoint='factors' ORDER BY id DESC LIMIT 1")[0]
+    assert dataset["metadata"]["factors_only"] is True
+    assert dataset["metadata"]["open_sessions"] == [str(today)]
+    assert not db.rows("SELECT 1 FROM datasets WHERE endpoint='history' AND scope=%s", (str(today),))
+
+
+def seed_daily_window(db, days, *, adjusted, benchmark, states=True):
+    """Publish one history/constraints partition per session, plus factors for the adjusted suffix."""
+    with db.transaction() as conn:
+        for day in days:
+            for exchange in ("SSE", "SZSE"):
+                conn.execute("INSERT INTO calendars VALUES(%s,%s,true,now())", (exchange, day))
+            conn.execute(
+                "INSERT INTO instruments VALUES('SH600895','Fixture','Main Board','SSE',%s,NULL,'L','{}',now()) "
+                "ON CONFLICT(symbol) DO NOTHING",
+                (days[-1],),
+            )
+            db.dataset(conn, "history", str(day), [{"symbol": "SH600895"}], {})
+            db.dataset(conn, "constraints", str(day), [{"symbol": "SH600895"}], {})
+            if day in adjusted:
+                db.dataset(conn, "factors", str(day), [{"symbol": "SH600895"}], {})
+        if benchmark:
+            did = db.dataset(conn, "benchmark", "SH000300", [{"symbol": "SH000300"}], {})
+            conn.execute("INSERT INTO daily_bars VALUES('SH000300',%s,%s,'{}')", (days[0], did))
+        if states:
+            did = db.dataset(conn, "security_history", "SH600895", [{"symbol": "SH600895"}], {})
+            conn.execute("INSERT INTO security_states VALUES('SH600895',%s,%s,now(),'{}')", (days[-1], did))
+
+
+def test_source_gaps_names_every_short_endpoint_with_its_counts(db):
+    from quant_platform.jobs.scheduler import source_gaps
+
+    days = [now().astimezone(CN).date() - timedelta(days=index) for index in range(4)]
+    seed_daily_window(db, days, adjusted={days[0], days[1]}, benchmark=False)
+    with db.transaction() as conn:
+        gaps = source_gaps(conn, days, 4, 3)
+    assert gaps == {"factors": [2, 3], "benchmark": str(days[0])}
+    with db.transaction() as conn:
+        assert source_gaps(conn, days, 5, 3) == {"sessions": [4, 5]}
+
+
+def test_source_gaps_accepts_an_adjusted_suffix_shorter_than_the_raw_window(db):
+    """Public front-adjusted series are shallower than the raw bars; that is not a blocker."""
+    from quant_platform.jobs.scheduler import source_gaps
+
+    days = [now().astimezone(CN).date() - timedelta(days=index) for index in range(4)]
+    seed_daily_window(db, days, adjusted={days[0], days[1]}, benchmark=True)
+    with db.transaction() as conn:
+        assert source_gaps(conn, days, 4, 2) == {}
+        # A hole in the middle of the suffix is a real gap: the walk stops at the newest missing day.
+        assert source_gaps(conn, days, 4, 3) == {"factors": [2, 3]}
+
+
+def test_source_gaps_reports_a_listed_security_without_a_recorded_state(db):
+    from quant_platform.jobs.scheduler import source_gaps
+
+    days = [now().astimezone(CN).date() - timedelta(days=index) for index in range(3)]
+    seed_daily_window(db, days, adjusted=set(days), benchmark=True, states=False)
+    with db.transaction() as conn:
+        assert source_gaps(conn, days, 3, 3) == {"security_states": "a listed security has no recorded state"}
 
 
 def test_unknown_intervening_calendar_blocks_activation(db):
@@ -179,20 +453,85 @@ def test_board_coverage_does_not_hide_unverified_references(db):
 def test_doctor_only_unblocks_revalidated_dependencies(db, settings):
     seed(db)
     with db.transaction() as conn:
-        for kind in ("directory", "daily", "quotes", "qlib_export"):
+        for kind in ("securities", "history", "quotes", "qlib_export"):
             jid = db.enqueue(conn, kind, "test", kind)
             conn.execute("UPDATE jobs SET status='blocked' WHERE id=%s", (jid,))
     feed = Mock()
-
-    def request(endpoint, params, probe=False):
-        if endpoint != "stock_basic":
-            raise PermissionDenied("not entitled")
-        return [{"ts_code": "600895.SH"}]
-
-    feed.request.side_effect = request
+    # 只有东方财富与通达信可达：依赖新浪/腾讯的能力必须继续阻塞。
+    feed.probe.return_value = {
+        "pytdx": {"reachable": True, "rows": 5},
+        "eastmoney": {"reachable": True, "rows": 5},
+        "sina": {"reachable": False, "error_type": "ProviderError"},
+        "tencent": {"reachable": False, "error_type": "ProviderError"},
+    }
     doctor(db, settings, feed)
     states = {r["kind"]: r["status"] for r in db.rows("SELECT kind,status FROM jobs")}
-    assert states == {"directory": "pending", "daily": "blocked", "quotes": "blocked", "qlib_export": "blocked"}
+    assert states == {"securities": "pending", "history": "pending", "quotes": "pending", "qlib_export": "blocked"}
+    assert db.setting("doctor")["reachable"] == ["eastmoney", "pytdx"]
+
+
+def test_doctor_blocks_everything_when_no_source_answers(db, settings):
+    seed(db)
+    with db.transaction() as conn:
+        jid = db.enqueue(conn, "history", "test", "blocked-history")
+        conn.execute("UPDATE jobs SET status='blocked' WHERE id=%s", (jid,))
+    feed = Mock()
+    feed.probe.return_value = {name: {"reachable": False, "error_type": "ProviderError"} for name in
+                               ("pytdx", "eastmoney", "sina", "tencent")}
+    result = doctor(db, settings, feed)
+    assert "history" in result["missing"]
+    assert db.rows("SELECT status FROM jobs WHERE kind='history'")[0]["status"] == "blocked"
+
+
+def test_doctor_fails_out_jobs_of_a_retired_kind(db, settings):
+    """令牌时代的主表任务叫 `directory`，原生分析叫 `analyze`/`research`。
+
+    升级后这些种类既没有处理器，也永远不会被解除阻塞，只会一直挂在运维面板上把真正的缺口埋掉。
+    """
+    from quant_platform.jobs.worker import JOB_KINDS
+
+    with db.transaction() as conn:
+        jobs = [
+            db.enqueue(conn, kind, "history", f"retired-{kind}")
+            for kind in ("directory", "analyze", "research")
+        ]
+        conn.execute("UPDATE jobs SET status='blocked' WHERE id=ANY(%s)", (jobs,))
+    feed = Mock()
+    feed.probe.return_value = {"sina": {"reachable": True, "rows": 5}}
+    doctor(db, settings, feed)
+
+    for job_id in jobs:
+        row = db.rows("SELECT * FROM jobs WHERE id=%s", (job_id,))[0]
+        assert row["status"] == "failed" and "retired" in row["error"]
+    assert not {"directory", "analyze", "research"} & JOB_KINDS and "securities" in JOB_KINDS
+
+
+def test_worker_refuses_a_kind_outside_the_declared_vocabulary(db, settings):
+    from quant_platform.jobs.worker import JOB_KINDS, Worker
+
+    worker = Worker(db, settings, "history")
+    with pytest.raises(ValueError, match="Unknown job kind"):
+        worker.execute({"kind": "directory", "id": 1, "payload": {}})
+    assert "directory" not in JOB_KINDS
+
+
+def test_market_report_job_publishes_a_report(db, settings):
+    """`POST /market-report` 与看板的「生成/刷新报告」都排这个任务。
+
+    分派链漏掉它时，两条路径都只会拿到一个以 `Unknown job kind.` 失败的任务 —— 接口存在、
+    看板页面存在、`market_report.publish` 也写好了，但没有任何地方调用它。
+    """
+    from quant_platform.analysis import market_report
+    from quant_platform.jobs.worker import Worker
+
+    day = seed(db)
+    with db.transaction() as conn:
+        db.enqueue(conn, "market_report", "analysis", "report-dispatch", {"as_of": str(day)})
+    Worker(db, settings, "analysis").execute(db.claim("analysis", "tester"))
+
+    rows = db.rows("SELECT * FROM reports WHERE kind=%s AND target=%s", (market_report.KIND, market_report.TARGET))
+    assert len(rows) == 1
+    assert rows[0]["as_of"] == day and rows[0]["engine"] == market_report.ENGINE
 
 
 def test_retention_preserves_recent_rows_and_records_incidents(db, settings, tmp_path):
@@ -233,28 +572,19 @@ def test_backup_connection_options_and_ambient_isolation(monkeypatch):
         pg_environment("host=localhost")
 
 
-def test_gapped_stock_and_benchmark_metrics_are_unavailable(history_rows):
-    from quant_platform.jobs.analyze import calendar_indicators
-
-    target = history_rows[-1]["day"]
-    calendar = {str(r["day"]): True for r in history_rows}
-    complete = calendar_indicators(history_rows, target, calendar)
-    assert complete["status"] == "complete" and complete["return20"] is not None
-    for rows, dates in (
-        (history_rows[:70] + history_rows[71:], calendar),
-        (history_rows, {k: v for k, v in calendar.items() if k != str(history_rows[70]["day"])}),
-        (history_rows, {**calendar, str(history_rows[70]["day"]): False}),
-    ):
-        result = calendar_indicators(rows, target, dates)
-        assert result["status"] == "calendar_gaps"
-        assert all(result.get(key) is None for key in ("return20", "rsi14", "sma60", "volatility20"))
-        assert result["data_versions"]
-
-
 def seed_analysis(db, history_rows):
+    """Publish a collected window the way ``collect.history`` does: one dated partition per session.
+
+    Dated scopes are what ``collected_through`` reads back to decide whether the requested window was
+    already collected, so a fixture that wants a repeat run to skip fetching must look like real
+    collection rather than one undated blob. The newest session is deliberately left uncollected.
+    """
     today = seed(db)
     with db.transaction() as conn:
         conn.execute("UPDATE instruments SET name='Fixture'")
+        # `create_run` 的训练宇宙等于采集范围（默认 `index` = 成分股 ∪ 观察篮子）。这个夹具会建流水线
+        # 运行，所以必须声明成分，否则范围为空、连运行都建不出来。
+        db.set_setting(conn, "index_members", {"index": "SH000300", "symbols": ["SH600895"], "dated": False})
     target = today - timedelta(days=1)
     rows = [{**r, "day": target - timedelta(days=len(history_rows) - 1 - i)} for i, r in enumerate(history_rows)]
     with db.transaction() as conn:
@@ -263,32 +593,31 @@ def seed_analysis(db, history_rows):
                 conn.execute(
                     "INSERT INTO calendars VALUES(%s,%s,true,now()) ON CONFLICT DO NOTHING", (exchange, row["day"])
                 )
-        did = db.dataset(conn, "daily", "fixture-history", rows[:-1], {})
-        fid = db.dataset(conn, "adj_factor", "fixture-history", rows, {})
-        for row in rows:
+            fid = db.dataset(conn, "factors", str(row["day"]), [row], {})
             conn.execute("INSERT INTO factors VALUES('SH600895',%s,%s,1)", (row["day"], fid))
         for row in rows[:-1]:
+            did = db.dataset(conn, "history", str(row["day"]), [row], {})
             conn.execute("INSERT INTO daily_bars VALUES('SH600895',%s,%s,%s)", (row["day"], did, jsonb(row["data"])))
     return target, rows
 
 
 def test_collection_never_publishes_native_recommendations(db, settings, history_rows):
-    from quant_platform.jobs.analyze import daily
     from quant_platform.jobs.collect import history
-    from quant_platform.domain.workflow import PipelineBlocked
 
     target, rows = seed_analysis(db, history_rows)
+    settings.history_scope = "all"
     feed = Mock()
-    feed.daily_partition.side_effect = lambda endpoint, day, codes, job: (
-        [{"symbol": "SH600895", "factor": 1}]
-        if endpoint == "adj_factor"
-        else [{"symbol": "SH600895", "day": day, **rows[-1]["data"]}]
-    )
-    history(db, feed, job(db, "daily", payload={"day": str(target)}))
+    feed.settings, feed.db = settings, None
+    feed.history.side_effect = lambda code, start, end: {
+        "symbol": code,
+        "source": "eastmoney",
+        "factor_source": "eastmoney",
+        "bars": provider_bars(rows),
+        "factors": {r["day"]: 1 for r in rows},
+    }
+    history(db, feed, job(db, "history", payload={"start": str(rows[0]["day"]), "end": str(target)}))
     assert db.setting("analysis_dirty")
     assert db.history("SH600895", target)[-1]["data"]["close"] == rows[-1]["data"]["close"]
-    with pytest.raises(PipelineBlocked, match="retired"):
-        daily(db, job(db, "analyze", payload={"day": str(target)}), settings)
     assert not db.rows("SELECT * FROM reports")
     assert not db.rows("SELECT * FROM recommendations")
     assert not db.rows("SELECT * FROM model_portfolios")
@@ -305,7 +634,7 @@ def test_pipeline_retry_pins_all_inputs(db, settings, history_rows):
 
     target, rows = seed_analysis(db, history_rows)
     with db.transaction() as conn:
-        did = db.dataset(conn, "daily", str(target), [rows[-1]], {})
+        did = db.dataset(conn, "history", str(target), [rows[-1]], {})
         conn.execute("INSERT INTO daily_bars VALUES('SH600895',%s,%s,%s)", (target, did, jsonb(rows[-1]["data"])))
         db.set_setting(conn, "analysis_target", str(target))
     run = create_run(db, settings, {"request_key": "retry-pinned"})
@@ -316,7 +645,7 @@ def test_pipeline_retry_pins_all_inputs(db, settings, history_rows):
         conn.execute("UPDATE calendars SET is_open=false WHERE day=%s", (target,))
         conn.execute("INSERT INTO scan_policies(data) SELECT data FROM scan_policies LIMIT 1")
         corrected = {**rows[-1]["data"], "close": 100}
-        revised = db.dataset(conn, "daily", str(target), [corrected], {})
+        revised = db.dataset(conn, "history", str(target), [corrected], {})
         conn.execute("INSERT INTO daily_bars VALUES('SH600895',%s,%s,%s)", (target, revised, jsonb(corrected)))
     assert retry_run(db, run["id"])["snapshot_reused"]
     retried = db.claim("qlib-data", "replacement")
@@ -414,7 +743,7 @@ def test_operational_metrics_cover_source_analysis_and_api_errors(db, settings, 
         )
         db.set_setting(conn, "analysis_target", str(day))
         db.set_setting(conn, "last_analysis", {"as_of": str(day - timedelta(days=2)), "at": at.isoformat()})
-    item = job(db, "daily")
+    item = job(db, "history")
     db.defer(item, "quota exhausted", transient=True)
     with TestClient(create_app(settings, db), raise_server_exceptions=False) as client:
         assert client.get("/api/v1/status").status_code == 401

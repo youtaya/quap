@@ -6,7 +6,6 @@ import math
 from quant_platform.domain import CN
 
 DAILY_LABEL = "Ref($open,-6)/Ref($open,-1)-1"
-MINUTE_LABEL = "lagged-entry-open-to-next-session-close-v1"
 
 
 def label_window(days, cutoff, frequency):

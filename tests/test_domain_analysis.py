@@ -1,9 +1,8 @@
-from copy import deepcopy
 from datetime import datetime, timedelta
 
 import pytest
 
-from quant_platform.analysis import basket_summary, indicators, screen
+from quant_platform.analysis import basket_summary
 from quant_platform.config import Settings
 from quant_platform.domain import BasketInput, CN, board, fresh, session, source_time, symbol
 
@@ -40,10 +39,23 @@ def test_basket_normalizes_weights():
     assert sum(item.members.values()) == pytest.approx(1)
 
 
-@pytest.mark.parametrize("provider", ["demo", "tencent", "eastmoney"])
-def test_no_public_production_provider(provider):
+@pytest.mark.parametrize("provider", ["demo", "tushare", "adata", ""])
+def test_only_the_tokenless_public_market_provider_is_accepted(provider):
     with pytest.raises(ValueError):
         Settings(provider=provider)
+
+
+@pytest.mark.parametrize("scope", ["everything", "csi300", ""])
+def test_history_scope_is_explicit(scope):
+    with pytest.raises(ValueError):
+        Settings(history_scope=scope)
+
+
+def test_public_market_provider_is_the_default():
+    settings = Settings()
+    assert settings.provider == "market"
+    assert settings.history_scope == "index"
+    assert not hasattr(settings, "tushare_token")
 
 
 def test_source_time_never_fabricates_date():
@@ -57,41 +69,6 @@ def test_source_time_never_fabricates_date():
     assert session(at, False) == ("closed", False)
     assert session(at, True)[1]
     assert not session(at.replace(hour=12), True)[1]
-
-
-def test_native_indicators(history_rows):
-    result = indicators(history_rows)
-    assert result["rsi14"] == 100
-    assert result["atr14"] == pytest.approx(2)
-    assert result["return20"] == pytest.approx(11.39 / 11.19 - 1)
-    assert result["sma5"] == pytest.approx(11.37)
-    assert result["volume_ratio20"] == 1
-    assert result["drawdown60"] == 0
-    assert result["average_turnover20"] == 30_000_000
-
-
-def test_corporate_action_replacement(history_rows):
-    original = indicators(history_rows)
-    revised = deepcopy(history_rows)
-    for row in revised[:70]:
-        row["factor"] = 0.5
-        row["factor_dataset_id"] += 10000
-    result = indicators(revised)
-    assert result["input_hash"] != original["input_hash"]
-    assert result["average_volume20"] == original["average_volume20"]
-    revised[-1]["factor"] = None
-    assert indicators(revised)["status"] == "insufficient_data"
-    assert indicators(history_rows[:5])["return20"] is None
-
-
-def test_screen_deterministic_and_explicit(history_rows):
-    metric = indicators(history_rows)
-    day = history_rows[-1]["day"]
-    stocks = {"SH600895": {"name": "Normal"}, "SZ000001": {"name": "ST risky"}}
-    report = screen(stocks, {code: metric for code in stocks}, day)
-    assert report["candidates"][0]["symbol"] == "SH600895"
-    assert "name_based_risk_filter" in report["excluded"]["SZ000001"]
-    assert not report["automatic_basket_changes"]
 
 
 def test_stale_missing_references_do_not_rearm_and_poll_times_not_identity():

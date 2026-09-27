@@ -4,8 +4,7 @@ import hashlib
 import json
 import math
 import re
-from datetime import date, datetime, time, timezone
-from typing import Protocol
+from datetime import datetime, time, timezone
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -56,11 +55,6 @@ def symbol(value):
         raise ValueError("Invalid exchange-qualified symbol.")
     board(value)
     return value
-
-
-def provider_code(value):
-    value = symbol(value)
-    return value[2:] + "." + value[:2]
 
 
 def session(at, is_open):
@@ -147,11 +141,3 @@ class ScreenRule(StrictModel):
     top_n: int = Field(20, ge=1, le=200)
     momentum_weight: float = Field(0.6, ge=0, le=1)
     exclude_risk_names: bool = True
-
-
-class HistoryRepository(Protocol):
-    def history(self, code: str, as_of: date, limit: int = 500) -> list[dict]: ...
-
-
-class AnalysisBackend(Protocol):
-    def indicators(self, rows: list[dict]) -> dict: ...
