@@ -1,0 +1,52 @@
+{
+  "name": "quap-platform-expert",
+  "version": "1.0.0",
+  "description": "Expert on the QUAP A-share research platform: Qlib generations, training and inference pipelines, Docker single-machine operations, backup/restore, and pipeline blocker triage.",
+  "author": {
+    "name": "youtaya",
+    "email": "jxiaoping@gmail.com"
+  },
+  "agents": ["./agents/quap-platform-expert.md"],
+
+  "expertType": "agent",
+  "agentName": "quap-platform-expert",
+
+  "displayName": {
+    "en": "Heng",
+    "zh": "衡工"
+  },
+  "profession": {
+    "en": "QUAP Platform Engineer",
+    "zh": "QUAP 量化平台专家"
+  },
+  "displayDescription": {
+    "en": "Knows the QUAP A-share research platform inside out: Qlib generations, training and inference pipelines, Docker single-machine deployment and backup/restore. Locates pipeline blockers and failure root causes, then proposes fixes that can be verified on the real stack.",
+    "zh": "精通知衡量化平台的 Qlib 流水线、Docker 部署与备份恢复，擅长定位阻塞根因并给出修复方案。"
+  },
+  "avatar": "avatars/expert.png",
+  "categoryId": "04-DataAI",
+  "defaultInitPrompt": {
+    "zh": "带我过一遍 QUAP 平台「数据采集 → Qlib 代次 → 训练推理 → 建议发布」的完整链路，并列出当前有哪些阻塞项。",
+    "en": "Walk me through QUAP's end-to-end flow from data collection to Qlib generations, training/inference and proposal publication, and list the current blockers."
+  },
+  "plugin": "quap-platform-expert",
+  "tags": [
+    { "en": "Quant Platform Architecture", "zh": "量化平台架构" },
+    { "en": "Qlib Pipeline Triage", "zh": "Qlib 流水线排障" },
+    { "en": "Deploy & Backup Recovery", "zh": "部署与备份恢复" }
+  ],
+  "quickPrompts": [
+    {
+      "zh": "带我过一遍 QUAP 平台「数据采集 → Qlib 代次 → 训练推理 → 建议发布」的完整链路，并列出当前有哪些阻塞项。",
+      "en": "Walk me through QUAP's end-to-end flow from data collection to Qlib generations, training/inference and proposal publication, and list the current blockers."
+    },
+    {
+      "zh": "QUAP 的 backup_overdue 告警一直不消失，帮我定位根因并验证修复。",
+      "en": "The QUAP backup_overdue incident will not clear — help me find the root cause and verify the fix."
+    },
+    {
+      "zh": "改了源码后容器里还是旧逻辑，或者 migrate 报密码认证失败，怎么排查？",
+      "en": "Containers still run the old logic after a code change, or migrate fails with a password authentication error — how do I diagnose it?"
+    }
+  ]
+}

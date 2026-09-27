@@ -28,6 +28,7 @@ The working tree adds isolated supplemental sources, immutable factor/configurat
 - [系统验证报告](docs/系统验证报告.md)
 - [Historical roadmap](docs/内部路线图.md) (superseded native-research/ledger scope; not the current delivery contract)
 - 架构图：[docs/architecture.svg](docs/architecture.svg)
+- [QUAP 平台专家包](experts/quap-platform-expert/README.md) — WorkBuddy 专家包「衡工」：平台架构、Qlib 流水线排障、部署与备份恢复
 
 ## Local development
 
