@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from pydantic import Field, SecretStr, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -44,6 +44,16 @@ class Settings(BaseSettings):
     # ``index`` 只拉沪深 300 成分、观察篮子和基准；``all`` 才拉全部上市 A 股。
     history_scope: str = "index"
     environment: str = "production"
+
+    @field_validator("database_url_file", "api_token_file", "backup_replica_root", mode="before")
+    @classmethod
+    def blank_optional_path_is_unset(cls, value):
+        # Compose forwards optional settings as ``${VAR:-}``, so an unset host variable arrives as an
+        # empty string. Pydantic reads that as ``Path('.')``, which is truthy: the backup job would
+        # then copy every bundle into the container's read-only root instead of skipping the replica,
+        # fail with a bare OSError, and leave ``settings.backup`` stale — which is what raises the
+        # backup_overdue incident. An empty value means "not configured".
+        return None if value == "" else value
 
     @model_validator(mode="after")
     def validate_secrets(self):

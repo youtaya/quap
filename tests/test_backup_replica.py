@@ -5,8 +5,24 @@ what it actually covers.
 """
 
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 
+from quant_platform.config import Settings
 from quant_platform.operations import copy_verified_replica, recovery_times
+
+
+def test_blank_optional_path_setting_means_unset(monkeypatch):
+    # Compose forwards the optional replica root as ``${QUANT_BACKUP_REPLICA_ROOT:-}``, so an unset
+    # host variable reaches the container as an empty string. ``Path("")`` is ``Path(".")`` and
+    # truthy, so the backup job took the replica branch and tried to copy a 30 MB bundle into the
+    # container's read-only root. An empty value has to mean "not configured".
+    monkeypatch.setenv("QUANT_BACKUP_REPLICA_ROOT", "")
+    settings = Settings(api_token="a" * 32, environment="test")
+    assert settings.backup_replica_root is None
+    assert not settings.backup_replica_root
+
+    monkeypatch.setenv("QUANT_BACKUP_REPLICA_ROOT", "/offsite")
+    assert Settings(api_token="a" * 32, environment="test").backup_replica_root == Path("/offsite")
 
 
 def test_replica_is_a_different_directory_and_recovery_times_are_differences(tmp_path):
