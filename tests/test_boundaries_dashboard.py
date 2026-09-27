@@ -363,6 +363,19 @@ def test_dashboard_login_and_logout_clear_private_state(monkeypatch):
     assert "stock_code" not in app.session_state
 
 
+def test_dashboard_login_normalizes_pasted_token_whitespace(monkeypatch):
+    # ``cat deploy/secrets/api_token`` ends in a newline. httpx rejects leading/trailing whitespace
+    # in a header value before sending, so an untrimmed paste fails with the generic "check your
+    # token" message even though the token is correct. The stored token must be the trimmed value.
+    monkeypatch.setattr(client.Client, "request", fake_request)
+    app = AppTest.from_file(str(APP), default_timeout=15).run()
+    app.text_input[0].set_value("  test-token\n")
+    next(b for b in app.button if b.label == "进入工作台").click().run()
+    assert not app.exception and not app.error
+    assert app.sidebar.radio
+    assert app.session_state["token"] == "test-token"
+
+
 @pytest.mark.postgres
 def test_dashboard_mutations_through_real_api_and_database(monkeypatch, db, settings, tmp_path):
     from fastapi.testclient import TestClient

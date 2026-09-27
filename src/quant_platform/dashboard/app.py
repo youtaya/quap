@@ -227,6 +227,11 @@ if "token" not in st.session_state:
             token = st.text_input("访问令牌", type="password", placeholder="请输入操作员访问令牌")
             submitted = st.form_submit_button("进入工作台", type="primary", width="stretch")
         if submitted:
+            # ``cat deploy/secrets/api_token`` ends in a newline, and httpx rejects any leading or
+            # trailing whitespace as an illegal header value before the request is sent — so the
+            # operator sees "check your token" even though the token is correct. ``Settings`` strips
+            # the token file, so the UI normalizes the pasted value the same way.
+            token = token.strip()
             probe = Client(os.getenv("QUANT_API_URL", "http://127.0.0.1:8000"), token)
             try:
                 probe.request("GET", "/status")
