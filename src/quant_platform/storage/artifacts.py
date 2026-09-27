@@ -42,6 +42,36 @@ def references(conn):
     return artifacts
 
 
+def safe_relative(value):
+    """A database artifact reference must be a plain relative POSIX path."""
+    if not isinstance(value, str):
+        return False
+    path = PurePosixPath(value)
+    return not path.is_absolute() and ".." not in path.parts and str(path) == value and value != "."
+
+
+def retained_artifacts(root, artifacts):
+    """Split references into the ones still on disk and the ones retention removed.
+
+    ``GenerationStore.publish`` keeps only the current and previous generation on disk on purpose,
+    while ``qlib_generations`` retains a row for every generation ever published — models,
+    predictions and experiments still point at them. A reference whose directory is gone was
+    therefore removed deliberately, not lost, so it must be recorded rather than treated as a
+    blocked prerequisite: demanding every reference on disk made the snapshot fail forever once a
+    third generation had been published. Ownership and path checks still apply — ``artifact_files``
+    resolves every retained reference through ``safe_artifact``, so a reference that escapes the
+    owned root stays a hard error.
+    """
+    base = Path(root).resolve()
+    present, pruned = {}, []
+    for relative, manifest in artifacts.items():
+        if (base / relative).exists():
+            present[relative] = manifest
+        else:
+            pruned.append(relative)
+    return present, sorted(pruned)
+
+
 def artifact_files(root, artifacts):
     files = {}
     for relative, manifest in artifacts.items():
@@ -76,7 +106,8 @@ def backup(db, settings, job):
             conn.execute("SELECT pg_advisory_xact_lock(%s)", (LIFECYCLE_LOCK,))
             snapshot = conn.execute("SELECT pg_export_snapshot() AS id,now() AS at").fetchone()
             artifacts = references(conn)
-            files = artifact_files(settings.artifact_root, artifacts)
+            present, pruned = retained_artifacts(settings.artifact_root, artifacts)
+            files = artifact_files(settings.artifact_root, present)
             result = subprocess.run(
                 ["pg_dump", "--format=custom", "--no-owner", "--snapshot", snapshot["id"], "--file", str(dump)],
                 env=pg_environment(settings.dsn),
@@ -89,7 +120,8 @@ def backup(db, settings, job):
             manifest = {
                 "format": "quap-snapshot-v1",
                 "snapshot_at": snapshot["at"].isoformat(),
-                "artifacts": artifacts,
+                "artifacts": present,
+                "pruned": pruned,
                 "files": {name: value[1] for name, value in files.items()},
             }
             with tarfile.open(staged, "w") as archive:
@@ -117,14 +149,15 @@ def backup(db, settings, job):
         "format": manifest["format"],
         "bytes": target.stat().st_size,
         "sha256": archive_hash,
-        "artifact_count": len(artifacts),
+        "artifact_count": len(present),
+        "pruned_count": len(pruned),
         "restore_verified": False,
         "replica": replica,
     }
     with db.publication(job) as conn:
         conn.execute(
             "INSERT INTO artifact_backups(id,data) VALUES(%s,%s)",
-            (backup_id, jsonb({**state, "artifacts": sorted(artifacts)})),
+            (backup_id, jsonb({**state, "artifacts": sorted(present)})),
         )
         db.set_setting(conn, "backup", state)
     # Legacy database-only dumps remain untouched; only owned, committed bundles are retired.
@@ -179,11 +212,14 @@ def _unpack_verified(archive, destination):
         if set(names) != set(manifest["files"]) | {"manifest.json"}:
             raise PipelineBlocked("Backup content does not match its manifest.")
         for relative, metadata in manifest["artifacts"].items():
-            path = PurePosixPath(relative)
-            if path.is_absolute() or ".." in path.parts or str(path) != relative or relative == ".":
+            if not safe_relative(relative):
                 raise PipelineBlocked("Backup contains an unsafe artifact reference.")
             if not isinstance(metadata, dict) or not isinstance(metadata.get("files"), dict):
                 raise PipelineBlocked("Backup contains an invalid artifact manifest.")
+        if not isinstance(manifest.get("pruned", []), list) or any(
+            not safe_relative(relative) for relative in manifest.get("pruned", [])
+        ):
+            raise PipelineBlocked("Backup contains an unsafe pruned artifact reference.")
         if "database.dump" not in manifest["files"] or any(
             name != "database.dump" and not name.startswith("artifacts/") for name in manifest["files"]
         ):
@@ -233,16 +269,22 @@ def restore_check(archive, target_dsn, source_db=None, fault_at=None, artifact_r
             raise RuntimeError("Restore validation failed.")
         with psycopg.connect(target_dsn, row_factory=dict_row) as conn:
             restored = references(conn)
-            if restored != manifest["artifacts"]:
+            # The restored database keeps a row for every generation ever published, including the
+            # ones retention pruned, so its references must match the archive's packed artifacts
+            # plus its recorded pruned set — not the packed set alone.
+            pruned = set(manifest.get("pruned", ()))
+            retained = {path: value for path, value in restored.items() if path not in pruned}
+            if set(restored) != set(manifest["artifacts"]) | pruned or retained != manifest["artifacts"]:
                 raise PipelineBlocked("Restored database and artifact references differ.")
             artifacts = temporary / "artifacts"
             artifacts.mkdir(exist_ok=True)
-            artifact_files(artifacts, restored)
+            artifact_files(artifacts, manifest["artifacts"])
             result = {
                 "schema": conn.execute("SELECT version_num FROM alembic_version").fetchone()["version_num"],
                 "reports": conn.execute("SELECT count(*) AS n FROM reports").fetchone()["n"],
                 "recommendations": conn.execute("SELECT count(*) AS n FROM recommendations").fetchone()["n"],
-                "artifact_count": len(restored),
+                "artifact_count": len(manifest["artifacts"]),
+                "pruned_count": len(pruned),
                 "artifact_root": str(destination),
                 "restored": True,
             }

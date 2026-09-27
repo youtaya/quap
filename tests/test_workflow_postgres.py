@@ -1115,6 +1115,16 @@ def test_backup_restores_report_and_exact_artifacts_from_one_snapshot(
                 sql.SQL("UPDATE {} SET {}=%s WHERE id=%s").format(sql.Identifier(table), sql.Identifier(column)),
                 (jsonb(manifest), row["id"]),
             )
+        # A generation the retention policy pruned: ``qlib_generations`` keeps the row because
+        # models, predictions and experiments still reference it, but the directory is gone. The
+        # snapshot has to record that instead of failing — requiring every reference on disk made
+        # the backup fail forever once a third generation had been published.
+        pruned_path = "qlib/generation-" + "0" * 32
+        conn.execute(
+            "INSERT INTO qlib_generations(id,frequency,watermark,as_of,contract,path,manifest) "
+            "VALUES(%s,'day',0,now(),'test',%s,'{}')",
+            (uuid4(), pruned_path),
+        )
         db.enqueue(conn, "backup", "backup-test", "consistent-backup")
     item = db.claim("backup-test", "backup-owner")
     execute = artifacts.subprocess.run
@@ -1132,8 +1142,8 @@ def test_backup_restores_report_and_exact_artifacts_from_one_snapshot(
 
     monkeypatch.setattr(artifacts.subprocess, "run", concurrent_publication)
     state = artifacts.backup(db, settings, item)
-    assert state["artifact_count"] == 6 and not state["restore_verified"]
-    assert len(db.rows("SELECT * FROM qlib_generations")) == 2
+    assert state["artifact_count"] == 6 and state["pruned_count"] == 1 and not state["restore_verified"]
+    assert len(db.rows("SELECT * FROM qlib_generations")) == 3
     target_name = "quant_restore_" + uuid4().hex
     target_dsn = make_conninfo(postgres_url, dbname=target_name)
     with psycopg.connect(postgres_url, autocommit=True) as admin:
@@ -1143,11 +1153,11 @@ def test_backup_restores_report_and_exact_artifacts_from_one_snapshot(
             result = artifacts.restore_check(
                 settings.backup_root / state["file"], target_dsn, db, artifact_root=destination
             )
-            assert result["artifact_count"] == 6 and result["recommendations"] == 1
+            assert result["artifact_count"] == 6 and result["pruned_count"] == 1 and result["recommendations"] == 1
             assert db.setting("backup")["restore_verified"]
             with psycopg.connect(target_dsn) as restored:
                 assert restored.execute("SELECT id FROM recommendations").fetchone()[0] == report_id
-                assert restored.execute("SELECT count(*) FROM qlib_generations").fetchone()[0] == 1
+                assert restored.execute("SELECT count(*) FROM qlib_generations").fetchone()[0] == 2
                 assert restored.execute("SELECT count(*) FROM research_artifacts").fetchone()[0] == 3
             for artifact in research:
                 artifacts.verify(destination / artifact["path"], artifact["manifest"])

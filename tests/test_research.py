@@ -400,6 +400,33 @@ def test_research_artifacts_are_referenced_and_checksum_verified(settings, tmp_p
         artifact_files(tmp_path, refs)
 
 
+def test_pruned_artifact_references_are_recorded_instead_of_blocking_the_snapshot(settings, tmp_path):
+    from quant_platform.storage.artifacts import artifact_files, references, retained_artifacts, safe_relative
+    from quant_platform.storage.research import store_artifact
+
+    settings = settings.model_copy(update={"artifact_root": tmp_path})
+    kept = store_artifact(settings, "snapshot", {"rows": []}, {"source_revision": 1})
+
+    class Connection:
+        def execute(self, query):
+            if "to_regclass" in query:
+                return SimpleNamespace(fetchone=lambda: {"name": "research_artifacts"})
+            return SimpleNamespace(fetchall=lambda: [kept] if "FROM research_artifacts" in query else [])
+
+    # ``GenerationStore.publish`` keeps only the current and previous generation on disk, while
+    # ``qlib_generations`` keeps a row for every generation ever published. A reference whose
+    # directory is gone was pruned deliberately, so it must be recorded, not treated as a blocked
+    # prerequisite — otherwise the snapshot fails forever once a third generation exists.
+    deleted = "qlib/generation-" + "0" * 32
+    refs = {**references(Connection()), deleted: {"files": {}}}
+    present, pruned = retained_artifacts(tmp_path, refs)
+
+    assert kept["path"] in present and pruned == [deleted]
+    assert len(artifact_files(tmp_path, present)) == 2
+    assert safe_relative(deleted)
+    assert not safe_relative("../escape") and not safe_relative("/absolute") and not safe_relative(".")
+
+
 def test_research_archive_roundtrip_and_retention_protects_references(settings, tmp_path):
     import io
     import os
