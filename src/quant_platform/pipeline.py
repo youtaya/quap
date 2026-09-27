@@ -4,7 +4,14 @@ from datetime import datetime, time, timedelta
 from uuid import uuid4
 
 from quant_platform.domain import CN, digest, now
-from quant_platform.domain.workflow import DATA_CONTRACT, ENGINE_VERSION, PipelineBlocked, RunInput, ScanPolicy
+from quant_platform.domain.workflow import (
+    CAPABILITY_LABELS,
+    DATA_CONTRACT,
+    ENGINE_VERSION,
+    PipelineBlocked,
+    RunInput,
+    ScanPolicy,
+)
 from quant_platform.storage import jsonb
 from quant_platform.storage.baskets import Conflict
 
@@ -87,22 +94,26 @@ def readiness(db, settings):
         missing = sorted(required - available)
         # 「permissions」是旧令牌供应商的措辞；免令牌公开源没有权限可授，缺的是一次成功的真实
         # 采集（`Market._qualify` 据此置位 `schema_verified`）。
-        blockers = ["unverified capabilities: " + ", ".join(missing)] if missing else []
+        # 这几条直接渲染在「今日」页，所以文案就是面向操作员的中文原文——不要在仪表盘里再做一层
+        # 英文到中文的字符串匹配翻译。
+        blockers = [
+            "数据源未验证：" + "、".join(CAPABILITY_LABELS.get(name, name) for name in missing)
+        ] if missing else []
         # 采集范围是**配置**，不是数据缺陷，所以它单列一条，而不是躲在覆盖门禁后面。生产验收要求
         # 全市场 ≥95% 覆盖；`index` 范围只采成分股与观察篮子，本就不满足这一条，必须说出来。
         if settings.history_scope != "all":
             blockers.append(
-                f"history scope is '{settings.history_scope}'; production acceptance requires "
-                "QUANT_HISTORY_SCOPE=all with at least 95% full-market daily coverage"
+                f"采集范围为「{settings.history_scope}」；生产验收要求 QUANT_HISTORY_SCOPE=all，"
+                "且全市场日线覆盖率至少 95%"
             )
         if role not in roles or "qlib-data" not in roles:
-            blockers.append("required Qlib workers unavailable")
+            blockers.append("必需的 Qlib 服务未就绪")
         if models[freq] is None:
-            blockers.append("no approved, qualified, unexpired Qlib model")
+            blockers.append("没有已发布、已合格且未过期的 Qlib 模型")
         if not any(g["frequency"] == freq for g in generations):
-            blockers.append("no validated Qlib generation")
+            blockers.append("没有已验证的 Qlib 数据代次")
         if freq == "5min" and models["day"] is None:
-            blockers.append("daily model baseline unavailable")
+            blockers.append("缺少日线模型基线")
         result[freq] = {"ready": not blockers, "blockers": blockers, "model": models[freq]}
     return {
         "engine": ENGINE_VERSION,

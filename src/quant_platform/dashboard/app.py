@@ -10,7 +10,10 @@ import pandas as pd
 import streamlit as st
 
 from quant_platform.dashboard.client import Client
-from quant_platform.dashboard.workflow import WORKSPACES as DESCRIPTIONS, render
+from quant_platform.dashboard.workflow import FREQUENCIES, STATES, WORKSPACE_LABELS
+from quant_platform.dashboard.workflow import WORKSPACES as DESCRIPTIONS
+from quant_platform.dashboard.workflow import render
+from quant_platform.domain.workflow import CAPABILITY_LABELS
 
 st.set_page_config(
     page_title="QUAP · 知衡量化",
@@ -20,14 +23,17 @@ st.set_page_config(
 )
 
 REQUIRED_ENDPOINTS = ("securities", "calendar", "history", "factors", "quotes")
-WORKSPACES = {name: name for name in DESCRIPTIONS}
 BOARDS = {"STAR Market": "科创板", "ChiNext": "创业板", "Main Board": "沪深主板"}
+# 板块卡右上角的角标。键与 `BOARDS` 一样用于匹配 API 返回的 board 字段，所以键保持英文；角标本身
+# 用中文简称，否则「今日」页会留下 STAR MARKET / CHINEXT / MAIN BOARD 三个英文词。
+BOARD_CODES = {"STAR Market": "科创", "ChiNext": "创业", "Main Board": "主板"}
 KINDS = {"basket": "组合分析", "stock": "个股分析", "screen": "选股结果", "factor": "因子诊断", "backtest": "研究路径"}
 LABELS = {
     "symbol": "股票代码",
     "name": "名称",
     "board": "所属板块",
     "status": "状态",
+    "state": "状态",
     "list_date": "上市日期",
     "day": "交易日",
     "close": "收盘价（元）",
@@ -51,6 +57,7 @@ LABELS = {
     "kind": "类型",
     "revision": "版本",
     "effective_day": "生效交易日",
+    "effective_from": "生效时间（北京）",
     "created_at": "创建时间（北京）",
     "recorded_at": "记录时间（北京）",
     "error": "异常信息",
@@ -72,39 +79,71 @@ LABELS = {
     "holdings": "持仓数",
     "net_return": "组合净收益",
     "benchmark_return": "基准收益",
+    "frequency": "频率",
+    "purpose": "用途",
+    "origin": "来源",
+    "watermark": "数据水位",
+    "contract": "数据契约",
+    "path": "存储路径",
+    "passed": "是否通过",
+    "expires_at": "过期时间（北京）",
+    "baseline_weight": "基线权重",
+    "target_weight": "目标权重",
+    "action": "调整动作",
+    "restrictions": "限制条件",
+    "momentum_20": "20 日动量",
+    "momentum_60_ex_5": "60 日动量（剔除近 5 日）",
+    "volatility_20": "20 日波动率",
+    "samples": "有效样本",
+    "factor": "因子",
+    "ic_mean": "IC 均值",
+    "ic_std": "IC 标准差",
+    "ic_ir": "IC 信息比率",
+    "ic_positive_ratio": "IC 为正比例",
+    "ic": "IC",
+    "rank_ic": "Rank IC",
+    "valid_pairs": "有效配对",
+    "time": "时间",
+    "fold": "折",
+    "configuration_id": "配置编号",
+    "artifact_id": "产物编号",
+    "source_id": "数据源",
+    "retrieved_at": "抓取时间（北京）",
+    "row_count": "记录数",
+    "job_id": "任务编号",
+    "control_revision": "控制版本",
+    "feature_cutoff": "特征截点",
 }
 VALUES = {
+    **FREQUENCIES,
+    **STATES,
+    **CAPABILITY_LABELS,
     **BOARDS,
     **KINDS,
     "L": "上市",
     "D": "退市",
     "P": "暂停上市",
-    "pending": "等待执行",
-    "running": "执行中",
-    "completed": "已完成",
-    "complete": "已完成",
-    "done": "已完成",
-    "failed": "执行失败",
-    "blocked": "受限",
     "reachable": "可访问",
-    "unavailable": "不可用",
     "unverified": "待验证",
     "circuit_open": "连接或字段异常",
     "denied": "权限不足",
-    "quotes": "行情采集",
-    "history": "历史采集",
+    "watch": "观察",
+    "exit": "清仓",
+    "hold": "维持",
+    "add": "建仓",
+    "increase": "加仓",
+    "reduce": "减仓",
+    "inference": "推理",
+    "training": "训练",
+    "pipeline": "流水线准备",
+    "scheduled": "定时导出",
+    "manual": "人工",
     "analysis": "分析计算",
     "operations": "运维备份",
     "scheduler": "任务调度",
     "research": "研究计算",
     "notify": "消息通知",
     "qlib": "Qlib 适配器",
-    "securities": "证券目录",
-    "calendar": "交易日历",
-    "factors": "复权因子",
-    "benchmark": "基准指数",
-    "constraints": "涨跌停推导",
-    "security_history": "风险状态",
     "analyze": "日终分析",
     "intraday": "盘中分析",
     "doctor": "接口诊断",
@@ -113,6 +152,13 @@ VALUES = {
     "qlib_report": "Qlib 报告",
     "market_report": "量化分析报告",
 }
+# 表格渲染的三类列：取值需要本地化的枚举列、需要转北京时间的时刻列、以及布尔列。
+ENUM_COLUMNS = {"board", "status", "state", "role", "queue", "kind", "frequency", "purpose", "origin", "action"}
+TIME_COLUMNS = {"source_time", "effective_from"}
+BOOLEAN_COLUMNS = {
+    "healthy": {True: "正常", False: "心跳过期"},
+    "passed": {True: "通过", False: "未通过"},
+}
 
 st.markdown(
     """
@@ -120,7 +166,9 @@ st.markdown(
       html, body, [data-testid="stApp"] {font-family: "PingFang SC", "Microsoft YaHei", sans-serif;}
       [data-testid="stAppViewContainer"] {background: #f5f7fb;}
       .block-container {padding-top: 2rem; padding-bottom: 2.5rem; max-width: 1520px;}
-      #MainMenu, footer {visibility: hidden;}
+      /* stToolbar 里是 Streamlit 自带的 Deploy 与运行指示，英文且与本平台无关；#MainMenu 与
+         footer 早已隐藏，一并隐藏它才是一致的。注意 CSS 不支持 # 行注释，必须用块注释。 */
+      #MainMenu, footer, [data-testid="stToolbar"] {visibility: hidden;}
       [data-testid="stHeader"] {background: transparent;}
       h1, h2, h3 {letter-spacing: -.025em; color: #152445;}
       h3 {font-size: 1.12rem !important;}
@@ -214,7 +262,7 @@ if "token" not in st.session_state:
     left, right = st.columns([1.3, 1], gap="large")
     with left:
         st.markdown(
-            '<div class="qp-login"><small>QUAP · RESEARCH WORKSPACE</small>'
+            '<div class="qp-login"><small>QUAP · 研究工作台</small>'
             "<h1>让数据有据可循<br>让研究从容发生</h1>"
             "<p>连接沪深市场，构建观察组合。<br>从行情采集到因子诊断，在一个工作台完成研究闭环。</p>"
             "<p>01　真实数据　　02　版本追溯　　03　人工复核</p></div>",
@@ -257,12 +305,14 @@ client = Client(os.getenv("QUANT_API_URL", "http://127.0.0.1:8000"), st.session_
 
 with st.sidebar:
     st.markdown(
-        '<div class="qp-brand"><span class="qp-logo">Q</span><div>知衡量化<small>QUAP WORKSPACE</small></div></div>',
+        '<div class="qp-brand"><span class="qp-logo">Q</span><div>知衡量化<small>研究工作台</small></div></div>',
         unsafe_allow_html=True,
     )
     st.divider()
     st.caption("研究空间")
-    page = st.radio("工作空间", list(WORKSPACES), format_func=lambda key: WORKSPACES[key], label_visibility="collapsed")
+    page = st.radio(
+        "工作空间", list(WORKSPACE_LABELS), format_func=lambda key: WORKSPACE_LABELS[key], label_visibility="collapsed"
+    )
     st.divider()
     st.markdown(
         '<div class="qp-side-note">沪深 A 股 · 人工决策<br>总览与组合观察每 10 秒刷新<br>所有时间均为北京时间</div>',
@@ -274,7 +324,7 @@ with st.sidebar:
         st.rerun()
 
 st.markdown(
-    f'<div class="qp-heading"><h1>{WORKSPACES[page]}</h1><p>{DESCRIPTIONS[page]}</p></div>',
+    f'<div class="qp-heading"><h1>{WORKSPACE_LABELS[page]}</h1><p>{DESCRIPTIONS[page]}</p></div>',
     unsafe_allow_html=True,
 )
 if message := st.session_state.pop("notice", None):
@@ -326,12 +376,12 @@ def table(rows, *, columns=None, labels=None, message="暂无记录"):
     if columns:
         frame = frame[[key for key in columns if key in frame.columns]]
     for key in frame.columns:
-        if key.endswith("_at") or key == "source_time":
+        if key.endswith("_at") or key in TIME_COLUMNS:
             frame[key] = frame[key].map(local_time)
-        elif key in {"board", "status", "role", "queue", "kind"}:
+        elif key in ENUM_COLUMNS:
             frame[key] = frame[key].map(lambda value: VALUES.get(value, value))
-        elif key == "healthy":
-            frame[key] = frame[key].map({True: "正常", False: "心跳过期"})
+        elif key in BOOLEAN_COLUMNS:
+            frame[key] = frame[key].map(lambda value: BOOLEAN_COLUMNS[key].get(value, value))
     # `labels` overrides LABELS for a caller that reuses a field name for a different quantity.
     st.dataframe(frame.rename(columns={**LABELS, **(labels or {})}), hide_index=True, width="stretch")
 
@@ -363,7 +413,12 @@ def status_ribbon(status):
         if c.get("status") == "reachable" and (c.get("data") or {}).get("schema_verified")
     }
     missing = [endpoint for endpoint in REQUIRED_ENDPOINTS if endpoint not in available]
-    capability_pill = pill("必需接口已验证", "ok") if not missing else pill("待验证接口：" + "、".join(missing), "warn")
+    # 接口名是数据契约里的标识符，直接展示会在顶栏留下英文词，所以按 `CAPABILITY_LABELS` 显示中文。
+    capability_pill = (
+        pill("必需接口已验证", "ok")
+        if not missing
+        else pill("待验证接口：" + "、".join(CAPABILITY_LABELS.get(name, name) for name in missing), "warn")
+    )
     ribbon([capability_pill, pill(f"更新于 {local_time(status.get('timestamp'))} 北京时间", "info")])
 
 
@@ -401,7 +456,7 @@ def operations(compact=False):
         with col:
             st.markdown(
                 f'<div class="qp-board"><div class="qp-board-head"><strong>{name}</strong>'
-                f'<span class="qp-board-code">{escape(key.upper())}</span></div>'
+                f'<span class="qp-board-code">{escape(BOARD_CODES.get(key, key))}</span></div>'
                 f'<div class="qp-return qp-{tone}">{value}</div><div class="qp-board-meta">等权样本当日涨跌幅</div>'
                 f'<div class="qp-track"><span style="width:{width}%"></span></div>'
                 f'<div class="qp-board-foot"><span>有效覆盖 {coverage_text}</span>'
@@ -411,8 +466,8 @@ def operations(compact=False):
     st.caption("红涨绿跌 · 以上为有效样本等权表现，非交易所指数；未覆盖权重不计入收益，覆盖不足时请谨慎解读。")
     if compact:
         return
-    st.subheader("Collection controls")
-    actions = {"refresh": "Update source data", "doctor": "Check provider capabilities"}
+    st.subheader("数据采集")
+    actions = {"refresh": "立即采集", "doctor": "检查数据源"}
     actions["resume" if status.get("polling_paused") else "pause"] = (
         "恢复采集" if status.get("polling_paused") else "暂停采集"
     )

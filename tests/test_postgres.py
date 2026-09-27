@@ -486,18 +486,18 @@ def test_readiness_clears_the_capability_blocker_once_every_capability_is_verifi
     from quant_platform.pipeline import DAILY_CAPABILITIES, readiness
 
     blocked = readiness(db, settings)["frequencies"]["day"]["blockers"]
-    assert any(item.startswith("unverified capabilities: ") for item in blocked)
+    assert any(item.startswith("数据源未验证：") for item in blocked)
 
     with db.transaction() as conn:
         for capability in DAILY_CAPABILITIES:
             db.capability(capability, "reachable", {"schema_verified": True, "source": "sina"})
     blockers = readiness(db, settings)["frequencies"]["day"]["blockers"]
 
-    assert not any(item.startswith("unverified capabilities: ") for item in blockers)
-    assert blockers == ["history scope is 'index'; production acceptance requires QUANT_HISTORY_SCOPE=all "
-                        "with at least 95% full-market daily coverage",
-                        "required Qlib workers unavailable", "no approved, qualified, unexpired Qlib model",
-                        "no validated Qlib generation"]
+    assert not any(item.startswith("数据源未验证：") for item in blockers)
+    assert blockers == ["采集范围为「index」；生产验收要求 QUANT_HISTORY_SCOPE=all，"
+                        "且全市场日线覆盖率至少 95%",
+                        "必需的 Qlib 服务未就绪", "没有已发布、已合格且未过期的 Qlib 模型",
+                        "没有已验证的 Qlib 数据代次"]
 
 
 def test_readiness_states_the_collection_scope_instead_of_hiding_it_behind_coverage(db, settings):
@@ -505,10 +505,10 @@ def test_readiness_states_the_collection_scope_instead_of_hiding_it_behind_cover
     from quant_platform.pipeline import readiness
 
     scoped = readiness(db, settings)["frequencies"]["day"]["blockers"]
-    assert any("history scope is 'index'" in item for item in scoped)
+    assert any("采集范围为「index」" in item for item in scoped)
 
     full = settings.model_copy(update={"history_scope": "all"})
-    assert not any("history scope" in item for item in readiness(db, full)["frequencies"]["day"]["blockers"])
+    assert not any("采集范围" in item for item in readiness(db, full)["frequencies"]["day"]["blockers"])
 
 
 def test_pipeline_scope_is_the_collection_scope(db, settings):

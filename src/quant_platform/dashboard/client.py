@@ -18,8 +18,8 @@ class Client:
         )
         if response.status_code >= 300:
             try:
-                message = response.json().get("detail", "Request failed")
+                message = response.json().get("detail", "请求失败")
             except ValueError:
-                message = "Backend unavailable"
+                message = "后端不可用"
             raise ValueError(f"{response.status_code}: {message}")
         return response.json()

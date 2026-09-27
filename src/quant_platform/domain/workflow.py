@@ -13,6 +13,21 @@ ENGINE_VERSION = "qlib-v1"
 DATA_CONTRACT = "qlib-adjusted-v1"
 Frequency = Literal["day", "5min"]
 
+# 数据契约里各数据源能力的**显示名**。同一个词表被两处消费：`pipeline.py` 用它拼就绪阻塞文案，
+# 仪表盘用它渲染「数据源能力」表。放在这里是因为两边都要用，而 `dashboard` 不得依赖 `pipeline`
+# （后者会拖进数据库依赖），`pipeline` 也不该反向依赖展示层。
+CAPABILITY_LABELS = {
+    "securities": "证券目录",
+    "calendar": "交易日历",
+    "history": "历史采集",
+    "factors": "复权因子",
+    "benchmark": "基准指数",
+    "constraints": "涨跌停推导",
+    "security_history": "风险状态",
+    "quotes": "行情采集",
+    "minutes": "分钟线",
+}
+
 
 class PipelineBlocked(RuntimeError):
     """A missing prerequisite, never permission to use a substitute model."""

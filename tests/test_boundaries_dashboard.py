@@ -88,7 +88,7 @@ def fake_request(self, method, path, data=None):
     if path == "/data-readiness":
         return {
             "frequencies": {
-                frequency: {"ready": False, "blockers": ["No approved Qlib model"], "model": None}
+                frequency: {"ready": False, "blockers": ["没有已发布、已合格且未过期的 Qlib 模型"], "model": None}
                 for frequency in ("day", "5min")
             }
         }
@@ -119,12 +119,12 @@ def test_dashboard_degraded_status_and_history_without_quotes(monkeypatch):
     assert not app.exception
     assert any("覆盖不足" in warning.value for warning in app.warning)
     app.sidebar.radio[0].set_value("Models & Validation").run()
-    assert any("No models" in item.value for item in app.info)
+    assert any("暂无模型" in item.value for item in app.info)
     app.sidebar.radio[0].set_value("Stock Research").run()
-    next(item for item in app.text_input if item.label == "Stock code").set_value("600895")
-    next(b for b in app.button if b.label == "View prices and model research").click().run()
+    next(item for item in app.text_input if item.label == "股票代码").set_value("600895")
+    next(b for b in app.button if b.label == "查看行情与模型研究").click().run()
     assert not app.exception
-    assert any("Unadjusted CNY" in text.value for text in app.caption)
+    assert any("未复权" in text.value for text in app.caption)
 
 
 def test_dashboard_labels_turnover_by_meaning_not_by_field_name(monkeypatch):
@@ -210,8 +210,8 @@ def test_dashboard_offers_only_pipeline_prepared_generations_for_experiments(mon
     app.run()
     app.sidebar.radio[0].set_value("Models & Validation").run()
     assert not app.exception
-    chooser = next(box for box in app.selectbox if box.label == "Canonical prepared generation")
-    assert chooser.options == [f"{prepared['id']} · day"]
+    chooser = next(box for box in app.selectbox if box.label == "已准备的规范数据代次")
+    assert chooser.options == [f"{prepared['id']} · 日线"]
     assert all(scheduled["id"] not in option for option in chooser.options)
 
 
@@ -239,7 +239,7 @@ def test_dashboard_portfolio_editor_sends_explicit_cash_and_revision(monkeypatch
     app = signed_app(monkeypatch)
     monkeypatch.setattr(client.Client, "request", request)
     app.sidebar.radio[0].set_value("My Model Portfolio").run()
-    next(b for b in app.button if b.label == "Save next-session baseline").click().run()
+    next(b for b in app.button if b.label == "保存为下一交易日基线").click().run()
     assert not app.exception
     payload = next(data for method, path, data in calls if method == "POST")
     assert payload["expected_revision"] == 0
@@ -266,7 +266,7 @@ def test_dashboard_beijing_time_market_colors_and_missing_values(monkeypatch):
     assert 'qp-flat">—' in html
     assert "有效覆盖 50.0%" in html
     assert "科创板" in html and "沪深主板" in html
-    assert any("No approved Qlib model" in item.value for item in app.warning)
+    assert any("没有已发布、已合格且未过期的 Qlib 模型" in item.value for item in app.warning)
     assert not any(b.label == "运行分析" for b in app.button)
 
 
@@ -298,9 +298,9 @@ def test_dashboard_scan_policy_uses_yuan_with_revision(monkeypatch):
     app = signed_app(monkeypatch)
     monkeypatch.setattr(client.Client, "request", request)
     app.sidebar.radio[0].set_value("Low-Price Scan").run()
-    next(n for n in app.number_input if n.label == "Minimum 20-session turnover (CNY)").set_value(35_000_000.0)
-    next(n for n in app.number_input if n.label == "Maximum raw price (CNY)").set_value(8.0)
-    next(b for b in app.button if b.label == "Save policy revision").click().run()
+    next(n for n in app.number_input if n.label == "20 日最小成交额（元）").set_value(35_000_000.0)
+    next(n for n in app.number_input if n.label == "最高原始股价（元）").set_value(8.0)
+    next(b for b in app.button if b.label == "保存策略版本").click().run()
     assert not app.exception
     value = next(data for method, path, data in calls if method == "PUT")
     assert value["expected_revision"] == 2
@@ -320,14 +320,14 @@ def test_dashboard_stock_code_normalization_and_invalid_input(monkeypatch):
     app = signed_app(monkeypatch)
     monkeypatch.setattr(client.Client, "request", request)
     app.sidebar.radio[0].set_value("Stock Research").run()
-    field = next(item for item in app.text_input if item.label == "Stock code")
+    field = next(item for item in app.text_input if item.label == "股票代码")
     field.set_value("600895.sh")
-    next(b for b in app.button if b.label == "View prices and model research").click().run()
+    next(b for b in app.button if b.label == "查看行情与模型研究").click().run()
     assert "/history/SH600895?limit=500" in calls
     assert not app.exception
     calls.clear()
-    next(item for item in app.text_input if item.label == "Stock code").set_value("invalid")
-    next(b for b in app.button if b.label == "View prices and model research").click().run()
+    next(item for item in app.text_input if item.label == "股票代码").set_value("invalid")
+    next(b for b in app.button if b.label == "查看行情与模型研究").click().run()
     assert app.error and not app.exception
     assert not any(path.startswith("/history/") for path in calls)
 
@@ -431,22 +431,22 @@ def test_dashboard_mutations_through_real_api_and_database(monkeypatch, db, sett
         app.run()
         assert not app.exception and not app.error
         app.sidebar.radio[0].set_value("My Model Portfolio").run()
-        next(n for n in app.text_input if n.label == "Portfolio name").set_value("UI baseline")
-        next(b for b in app.button if b.label == "Save next-session baseline").click().run()
+        next(n for n in app.text_input if n.label == "组合名称").set_value("UI baseline")
+        next(b for b in app.button if b.label == "保存为下一交易日基线").click().run()
         assert not app.exception and not app.error
         saved = db.rows("SELECT * FROM model_portfolios")[0]
         assert saved["name"] == "UI baseline" and saved["revision"] == 1
         app.run()
         app.selectbox[0].set_value(str(saved["id"])).run()
-        next(n for n in app.text_input if n.label == "Portfolio name").set_value("Revised baseline")
-        next(b for b in app.button if b.label == "Save next-session baseline").click().run()
+        next(n for n in app.text_input if n.label == "组合名称").set_value("Revised baseline")
+        next(b for b in app.button if b.label == "保存为下一交易日基线").click().run()
         assert not app.exception and not app.error
         assert db.rows("SELECT revision FROM model_portfolios")[0]["revision"] == 2
         app.sidebar.radio[0].set_value("Low-Price Scan").run()
-        next(b for b in app.button if b.label == "Accept selected changes").click().run()
+        next(b for b in app.button if b.label == "采纳所选调整").click().run()
         assert app.error and not db.rows("SELECT * FROM recommendation_acceptances")
-        next(c for c in app.checkbox if "sends no orders" in c.label).check().run()
-        next(b for b in app.button if b.label == "Accept selected changes").click().run()
+        next(c for c in app.checkbox if "不会发送任何委托" in c.label).check().run()
+        next(b for b in app.button if b.label == "采纳所选调整").click().run()
         assert not app.exception and not app.error
         accepted = db.rows("SELECT * FROM recommendation_acceptances WHERE recommendation_id=%s", (report_id,))[0]
         weights = db.rows(
@@ -454,7 +454,7 @@ def test_dashboard_mutations_through_real_api_and_database(monkeypatch, db, sett
         )[0]["data"]
         assert weights["weights"] == {"SH600000": 0.035}
         assert weights["cash_weight"] == pytest.approx(0.965)
-        next(b for b in app.button if b.label == "Save policy revision").click().run()
+        next(b for b in app.button if b.label == "保存策略版本").click().run()
         assert len(db.rows("SELECT * FROM scan_policies")) == 2
         app.sidebar.radio[0].set_value("Data & Pipeline").run()
         assert app.json and not app.exception
@@ -462,7 +462,7 @@ def test_dashboard_mutations_through_real_api_and_database(monkeypatch, db, sett
         next(b for b in app.button if b.label == "保存运行设置").click().run()
         assert db.setting("runtime_options")["quote_seconds"] == 45
         app.sidebar.radio[0].set_value("Low-Price Scan").run()
-        next(b for b in app.button if b.label == "Run or reuse daily Qlib inference").click().run()
+        next(b for b in app.button if b.label == "运行或复用当日 Qlib 推理").click().run()
         assert all(row["kind"].startswith("qlib_") for row in db.rows("SELECT kind FROM jobs"))
         assert not db.rows("SELECT * FROM baskets")
         assert not app.exception and not app.error

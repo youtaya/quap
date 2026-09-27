@@ -17,14 +17,14 @@ def test_explicit_source_collection_and_quarantine_journey():
     assert len(app.sidebar.radio[0].options) == 7
     assert "Qlib Report" in app.sidebar.radio[0].options
     assert app.session_state["fixture_data"]["mutations"] == []
-    widget(app.checkbox, "Enable this research source").check()
-    widget(app.checkbox, "I have reviewed and acknowledge this upstream's data terms.").check()
-    widget(app.button, "Save source revision").click().run()
+    widget(app.checkbox, "启用该研究数据源").check()
+    widget(app.checkbox, "我已阅读并确认该上游的数据条款。").check()
+    widget(app.button, "保存数据源版本").click().run()
     assert not app.exception
-    assert not widget(app.button, "Request research collection").disabled
-    widget(app.text_area, "Explicit stock codes (comma-separated, at most 50)").set_value("SH600000")
-    widget(app.checkbox, "Request this bounded collection; no historical availability is implied.").check()
-    widget(app.button, "Request research collection").click().run()
+    assert not widget(app.button, "请求研究采集").disabled
+    widget(app.text_area, "显式股票代码（逗号分隔，最多 50 只）").set_value("SH600000")
+    widget(app.checkbox, "请求这次有界采集；这不代表历史数据可用。").check()
+    widget(app.button, "请求研究采集").click().run()
     assert not app.exception
     mutations = app.session_state["fixture_data"]["mutations"]
     assert [row["path"] for row in mutations] == ["/research-sources/adata-eastmoney-intraday", "/research-collections"]
@@ -37,30 +37,30 @@ def test_factor_configuration_comparison_freeze_and_challenger_journey():
     app = AppTest.from_file(str(APP), default_timeout=20).run()
     app.sidebar.radio[0].set_value("Models & Validation").run()
     assert not app.exception
-    widget(app.text_input, "Factor name").set_value("Momentum")
-    widget(app.text_input, "Factor author").set_value("Fixture")
-    widget(app.button, "Save experimental factor").click().run()
+    widget(app.text_input, "因子名称").set_value("Momentum")
+    widget(app.text_input, "因子作者").set_value("Fixture")
+    widget(app.button, "保存实验性因子").click().run()
     assert not app.exception
     factors = app.session_state["fixture_data"]["factors"]
-    widget(app.text_input, "Factor-set name").set_value("Candidate factors")
-    widget(app.multiselect, "Ordered factor revisions").set_value([factors[0]])
-    widget(app.button, "Save experimental factor set").click().run()
+    widget(app.text_input, "因子集名称").set_value("Candidate factors")
+    widget(app.multiselect, "有序因子版本").set_value([factors[0]])
+    widget(app.button, "保存实验性因子集").click().run()
     assert not app.exception
     for name in ("Baseline", "Candidate"):
-        widget(app.text_input, "Training-configuration name").set_value(name)
-        widget(app.button, "Save immutable training configuration").click().run()
+        widget(app.text_input, "训练配置名称").set_value(name)
+        widget(app.button, "保存不可变训练配置").click().run()
         assert not app.exception
-    widget(app.button, "Compare development folds").click().run()
+    widget(app.button, "比较开发折").click().run()
     assert not app.exception
     before_evidence = len(app.session_state["fixture_data"]["mutations"])
-    widget(app.checkbox, "Load immutable validation factor evidence").check().run()
+    widget(app.checkbox, "加载不可变的验证集因子证据").check().run()
     assert not app.exception
-    assert widget(app.selectbox, "Validation feature").value == "R_Momentum"
+    assert widget(app.selectbox, "验证特征").value == "R_Momentum"
     assert len(app.session_state["fixture_data"]["mutations"]) == before_evidence
-    widget(app.checkbox, "I select using validation evidence only; final test exposure will be recorded.").check()
-    widget(app.button, "Freeze candidate specification").click().run()
+    widget(app.checkbox, "我仅依据验证集证据做选择；最终测试集的曝光会被记录。").check()
+    widget(app.button, "冻结候选配置").click().run()
     assert not app.exception
-    widget(app.button, "Create challenger from frozen candidate").click().run()
+    widget(app.button, "用已冻结的候选创建挑战模型").click().run()
     assert not app.exception
     mutations = app.session_state["fixture_data"]["mutations"]
     assert mutations[-1]["path"] == "/model-training-runs"

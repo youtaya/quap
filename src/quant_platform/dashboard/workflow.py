@@ -14,6 +14,51 @@ from quant_platform.domain.workflow import PortfolioInput, ScanPolicy
 MARKET_REPORT_DISCLAIMER = "本报告为描述性量化统计，不构成投资建议，也不是模型推荐或目标权重。"
 QLIB_REPORT_DISCLAIMER = "Qlib 研究报告为描述性统计，不构成投资建议，也不是目标权重；平台不执行交易。"
 
+# 工作空间的**键**是路由标识符：侧边栏单选把它交给 ``render``，``render`` 再拿它做 ``page ==``
+# 比较。所以键保持英文不动，``WORKSPACE_LABELS`` 是显示名，``WORKSPACES`` 是标题下的一句话说明。
+WORKSPACES = {
+    "Overview": "今天能不能出建议，以及为什么。",
+    "My Model Portfolio": "查看基线权重与现金，采纳版本化的 Qlib 建议。",
+    "Stock Research": "查看行情与模型视角，不代表券商持仓。",
+    "Qlib Report": "因子 IC、前瞻收益分位与相对基准的等权组合。",
+    "Low-Price Scan": "用 Qlib 预测给低价股排序，而不是按便宜程度。",
+    "Models & Validation": "在人工发布前查看评估与影子证据。",
+    "Data & Pipeline": "追溯前置条件、不可变代次、依赖关系与定向重试。",
+}
+
+WORKSPACE_LABELS = {
+    "Overview": "今日",
+    "My Model Portfolio": "我的组合",
+    "Stock Research": "个股研究",
+    "Qlib Report": "研究报告",
+    "Low-Price Scan": "选股发现",
+    "Models & Validation": "模型与验证",
+    "Data & Pipeline": "运行记录与配置",
+}
+
+# 频率与状态的取值来自 API，出现在表头和行内文案里；集中在这里，供仪表盘与表格共用。
+FREQUENCIES = {"day": "日线", "5min": "五分钟"}
+STATES = {
+    "pending": "等待执行",
+    "running": "执行中",
+    "completed": "已完成",
+    "complete": "已完成",
+    "done": "已完成",
+    "failed": "执行失败",
+    "blocked": "受阻",
+    "shadow": "影子观察",
+    "active": "已发布",
+    "retired": "已退役",
+    "succeeded": "已成功",
+    "rejected": "未通过",
+    "quarantined": "已隔离",
+    "available": "可用",
+    "unavailable": "不可用",
+    "ready": "已就绪",
+    "frozen": "已冻结",
+    "cancelled": "已取消",
+}
+
 
 def _decimal(value, digits=4):
     return "—" if value is None else f"{value:.{digits}f}"
@@ -21,16 +66,6 @@ def _decimal(value, digits=4):
 
 def _percent(value):
     return "—" if value is None else f"{value * 100:.2f}%"
-
-WORKSPACES = {
-    "Overview": "Are daily and five-minute recommendations ready?",
-    "My Model Portfolio": "Review baseline weights and cash, then accept versioned Qlib proposals.",
-    "Stock Research": "Inspect model views and prices without implying brokerage holdings.",
-    "Qlib Report": "Factor IC, forward-return quantiles and the benchmark-relative equal-weight book.",
-    "Low-Price Scan": "Rank low nominal-price stocks using Qlib predictions, not cheapness.",
-    "Models & Validation": "Inspect evaluation and shadow evidence before a manual release decision.",
-    "Data & Pipeline": "Trace prerequisites, immutable generations, dependencies, and scoped retries.",
-}
 
 
 def request_key(scope, body):
@@ -46,7 +81,7 @@ def request_run(call, frequency, purpose="inference", portfolio_id=None, model_i
     body["request_key"] = str(uuid4())
     result = call("POST", "/model-training-runs" if purpose == "training" else "/pipeline-runs", body)
     if result is not None:
-        st.success(f"Run {result['run_id']}: {result['state']}. Follow progress in Data & Pipeline.")
+        st.success(f"任务 {result['run_id']} 已提交。进度见「运行记录与配置」。")
 
 
 def latest(call, frequency, portfolio_id=None):
@@ -61,39 +96,36 @@ def readiness(call):
     data = call("GET", "/data-readiness")
     if not data:
         return
-    for col, (frequency, label) in zip(st.columns(2), (("day", "Daily"), ("5min", "Five-minute"))):
+    for col, (frequency, label) in zip(st.columns(2), (("day", "日线"), ("5min", "五分钟"))):
         with col:
             state = data["frequencies"][frequency]
-            st.metric(label, "Ready" if state["ready"] else "Blocked")
+            st.metric(label, "已就绪" if state["ready"] else "受阻")
             for blocker in state["blockers"]:
                 st.warning(blocker)
             model = state.get("model")
             if model:
-                st.caption(f"Release {model['id']} · expires {model.get('expires_at')}")
+                st.caption(f"发布版本 {model['id']} · 过期时间 {model.get('expires_at')}")
     research = data.get("research_minutes")
     if research:
-        with st.expander("Historical intraday training readiness"):
+        with st.expander("历史盘中训练就绪情况"):
             st.json(research)
-    st.caption("Qlib is required. Missing prerequisites never produce substitute recommendations.")
+    st.caption("本平台依赖 Qlib；缺少前置条件时不会生成替代建议。")
 
 
 def show_report(call, table, local_time, report, *, accept_changes=False, portfolio=None):
     if report is None:
-        st.info(
-            "No valid Qlib proposal. Check Data & Pipeline for prerequisites; legacy reports are not recommendations."
-        )
+        st.info("暂无有效的 Qlib 建议。请到「运行记录与配置」查看前置条件；历史报告不是建议。")
         return
     data = report["data"]
-    st.caption(f"{report['frequency']} · model {report['model_id']} · report {report['id']}")
+    frequency = FREQUENCIES.get(report["frequency"], report["frequency"])
+    st.caption(f"{frequency} · 模型 {report['model_id']} · 报告 {report['id']}")
+    st.caption(f"特征截点：{local_time(report['as_of'])} · 预测可用时间：{local_time(report['available_at'])}")
     st.caption(
-        f"Feature cutoff: {local_time(report['as_of'])} · prediction available: {local_time(report['available_at'])}"
+        f"生效时间：{local_time(report['effective_from'])} · 失效时间：{local_time(report['valid_until'])}（北京时间）"
     )
-    st.caption(
-        f"Effective: {local_time(report['effective_from'])} · expires: {local_time(report['valid_until'])} (Beijing)"
-    )
-    st.metric("Proposed cash", f"{data['cash_weight']:.2%}")
+    st.metric("建议现金比例", f"{data['cash_weight']:.2%}")
     table(data.get("stocks"), columns=["symbol", "score", "baseline_weight", "target_weight", "action", "restrictions"])
-    with st.expander("Provenance: source → dataset → model → prediction → evaluation → decision"):
+    with st.expander("溯源链路：数据源 → 数据集 → 模型 → 预测 → 评估 → 决策"):
         detail = call("GET", f"/recommendations/{report['id']}")
         if detail is not None:
             st.json(detail)
@@ -101,7 +133,7 @@ def show_report(call, table, local_time, report, *, accept_changes=False, portfo
         return
     deadline = datetime.fromisoformat(report["effective_from"])
     if not report.get("valid", False) or datetime.now(timezone.utc) >= deadline:
-        st.warning("Acceptance is closed. Request a fresh proposal with a future effective time.")
+        st.warning("采纳窗口已关闭。请重新生成一个生效时间在未来的建议。")
         return
     choices = [
         r["symbol"]
@@ -109,18 +141,16 @@ def show_report(call, table, local_time, report, *, accept_changes=False, portfo
         if r.get("target_weight") is not None and (r["target_weight"] > 0 or r.get("baseline_weight", 0) > 0)
     ]
     with st.form(f"accept_{report['id']}"):
-        selected = st.multiselect("Changes to accept", choices, default=choices)
+        selected = st.multiselect("本次采纳的调整", choices, default=choices)
         name = st.text_input(
-            "Portfolio name", value=portfolio["name"] if portfolio else "Reviewed Qlib targets", max_chars=120
+            "组合名称", value=portfolio["name"] if portfolio else "已复核的 Qlib 目标", max_chars=120
         )
-        st.caption(
-            "Selected exact target weights are preserved; unselected baseline weights stay unchanged. Residual allocation stays cash."
-        )
-        confirmed = st.checkbox("I understand this creates a model-portfolio revision and sends no orders.")
-        submitted = st.form_submit_button("Accept selected changes", type="primary")
+        st.caption("所选标的按精确目标权重写入；未选中的标的保持基线权重不变。剩余部分留作现金。")
+        confirmed = st.checkbox("我了解：这只会生成一个模型组合版本，不会发送任何委托。")
+        submitted = st.form_submit_button("采纳所选调整", type="primary")
     if submitted:
         if not confirmed or not selected:
-            st.error("Select changes and confirm the model-portfolio-only action.")
+            st.error("请选择要采纳的调整，并确认该操作仅作用于模型组合。")
             return
         body = {
             "portfolio_id": portfolio["id"] if portfolio else None,
@@ -132,7 +162,7 @@ def show_report(call, table, local_time, report, *, accept_changes=False, portfo
         body["request_key"] = request_key(f"accept:{report['id']}", body)
         result = call("POST", f"/recommendations/{report['id']}/accept", body)
         if result is not None:
-            st.session_state.notice = f"Model-portfolio revision {result['revision']} accepted. No orders sent."
+            st.session_state.notice = f"已采纳模型组合版本 {result['revision']}，未发送任何委托。"
             st.rerun()
 
 
@@ -142,18 +172,16 @@ def portfolios(call, table, local_time):
         return
     choices = {"new": None, **{p["id"]: p for p in saved}}
     selected_id = st.selectbox(
-        "Model portfolio",
+        "模型组合",
         list(choices),
-        format_func=lambda key: "Create baseline" if key == "new" else choices[key]["name"],
+        format_func=lambda key: "新建基线" if key == "new" else choices[key]["name"],
     )
     selected = choices[selected_id]
     source = selected["data"] if selected else {"weights": {}, "cash_weight": 1.0}
     revision = selected["revision"] if selected else 0
-    st.caption(
-        "These are model target allocations, not brokerage positions. Fractions must sum to 1 including cash; no normalization."
-    )
+    st.caption("这些是模型目标配置，不是券商持仓。各比例含现金在内必须合计为 1，平台不做归一化。")
     with st.form(f"portfolio_{selected_id}_{revision}"):
-        name = st.text_input("Portfolio name", selected["name"] if selected else "My model portfolio", max_chars=120)
+        name = st.text_input("组合名称", selected["name"] if selected else "我的模型组合", max_chars=120)
         weights = st.data_editor(
             pd.DataFrame(
                 [{"symbol": code, "weight": weight} for code, weight in source["weights"].items()],
@@ -163,16 +191,16 @@ def portfolios(call, table, local_time):
             hide_index=True,
             width="stretch",
             column_config={
-                "symbol": st.column_config.TextColumn("Symbol", required=True),
+                "symbol": st.column_config.TextColumn("股票代码", required=True),
                 "weight": st.column_config.NumberColumn(
-                    "Target fraction", min_value=0.000001, max_value=1.0, required=True, format="%.6f"
+                    "目标权重", min_value=0.000001, max_value=1.0, required=True, format="%.6f"
                 ),
             },
         )
         cash = st.number_input(
-            "Cash fraction", min_value=0.0, max_value=1.0, value=float(source["cash_weight"]), format="%.6f"
+            "现金比例", min_value=0.0, max_value=1.0, value=float(source["cash_weight"]), format="%.6f"
         )
-        submitted = st.form_submit_button("Save next-session baseline", type="primary")
+        submitted = st.form_submit_button("保存为下一交易日基线", type="primary")
     if submitted:
         try:
             members = {}
@@ -183,7 +211,7 @@ def portfolios(call, table, local_time):
                 members[code] = row["weight"]
             body = PortfolioInput(name=name, weights=members, cash_weight=cash, expected_revision=revision).model_dump()
         except (ValueError, TypeError):
-            st.error("Use unique valid symbols, positive finite weights, and explicit cash totaling 1.")
+            st.error("请使用唯一且有效的股票代码、正的有限权重，并显式填写合计为 1 的现金比例。")
         else:
             result = call(
                 "PUT" if selected else "POST",
@@ -192,13 +220,14 @@ def portfolios(call, table, local_time):
             )
             if result is not None:
                 st.success(
-                    f"Revision {result['revision']} saved; effective {local_time(result['effective_from'])} Beijing. No orders sent."
+                    f"版本 {result['revision']} 已保存，自 {local_time(result['effective_from'])}（北京时间）生效。"
+                    "未发送任何委托。"
                 )
     if selected:
-        st.caption(f"Baseline revision {revision} · effective {local_time(selected['effective_from'])} Beijing")
-        if st.button("Request daily diagnosis"):
+        st.caption(f"基线版本 {revision} · 自 {local_time(selected['effective_from'])}（北京时间）生效")
+        if st.button("请求日线诊断"):
             request_run(call, "day", portfolio_id=selected_id)
-        for frequency, tab in zip(("day", "5min"), st.tabs(["Daily proposal", "Five-minute overlay"])):
+        for frequency, tab in zip(("day", "5min"), st.tabs(["日线建议", "五分钟叠加"])):
             with tab:
                 show_report(
                     call,
@@ -208,7 +237,7 @@ def portfolios(call, table, local_time):
                     accept_changes=True,
                     portfolio=selected,
                 )
-        with st.expander("Baseline revision history"):
+        with st.expander("基线版本历史"):
             table(call("GET", f"/model-portfolios/{selected_id}/revisions"))
 
 
@@ -221,7 +250,7 @@ def market_report(call, table, local_time):
             st.success(f"已提交报告任务 #{result['job_id']}，由分析队列计算；完成后刷新本页查看。")
     current = call("GET", "/market-report")
     if not isinstance(current, dict) or not current.get("report"):
-        st.info("尚无量化分析报告。点击“生成/刷新报告”提交任务，或在服务器上运行 `quant-platform report`。")
+        st.info("尚无量化分析报告。点击「生成/刷新报告」提交任务，或在服务器上运行 `quant-platform report`。")
         return
     report = current["report"]
     meta = report.get("meta", {})
@@ -232,9 +261,9 @@ def market_report(call, table, local_time):
     if current.get("markdown"):
         st.markdown(current["markdown"])
     if report.get("status") != "complete":
-        st.info(f"报告状态：{report.get('status')}。{report.get('reason') or ''}")
+        st.info(f"报告状态：{STATES.get(report.get('status'), report.get('status'))}。{report.get('reason') or ''}")
         return
-    st.subheader("因子 Rank IC 证据（前瞻20日，非重叠窗口）")
+    st.subheader("因子 Rank IC 证据（前瞻 20 日，非重叠窗口）")
     table(
         [
             {
@@ -251,7 +280,7 @@ def market_report(call, table, local_time):
     st.subheader("描述性排名组合")
     st.caption(composite.get("label", MARKET_REPORT_DISCLAIMER))
     columns = ["symbol", "name", "board", "close", "score", "momentum_20", "momentum_60_ex_5", "volatility_20"]
-    for title, tab in zip(("top", "bottom"), st.tabs(["前20", "后20"])):
+    for title, tab in zip(("top", "bottom"), st.tabs(["前 20", "后 20"])):
         with tab:
             table(composite.get(title), columns=columns)
     with st.expander("原始报告 JSON"):
@@ -327,27 +356,27 @@ def qlib_report(call, table, local_time):
 
 
 def stocks(call, table, local_time):
-    search = st.text_input("Search stocks", max_chars=120)
+    search = st.text_input("搜索股票", max_chars=120)
     table(call("GET", "/instruments?search=" + quote(search.strip(), safe="")))
     saved = call("GET", "/model-portfolios") or []
     contexts = {"standalone": None, **{p["id"]: p for p in saved}}
     context = st.selectbox(
-        "Portfolio context",
+        "组合上下文",
         list(contexts),
-        format_func=lambda key: "Standalone model view" if key == "standalone" else contexts[key]["name"],
+        format_func=lambda key: "独立模型视角" if key == "standalone" else contexts[key]["name"],
     )
     with st.form("stock_research"):
-        code = st.text_input("Stock code", key="stock_research_input")
-        submitted = st.form_submit_button("View prices and model research")
+        code = st.text_input("股票代码", key="stock_research_input")
+        submitted = st.form_submit_button("查看行情与模型研究")
     if submitted:
         try:
             st.session_state.stock_code = symbol(code)
         except ValueError:
             st.session_state.pop("stock_code", None)
-            st.error("Enter a valid Shanghai/Shenzhen stock code.")
+            st.error("请输入有效的沪市/深市股票代码。")
     if code := st.session_state.get("stock_code"):
         history = call("GET", f"/history/{quote(code)}?limit=500") or []
-        st.caption("Unadjusted CNY prices are display data, not Qlib recommendations or expected returns.")
+        st.caption("未复权的元价格属于展示数据，不是 Qlib 建议或预期收益。")
         if history:
             frame = (
                 pd.DataFrame(
@@ -364,8 +393,8 @@ def stocks(call, table, local_time):
             )
             st.line_chart(frame[["open", "high", "low", "close"]])
             st.bar_chart(frame[["volume"]])
-            st.caption("Physical volume in shares. Canonical public-market raw prices; not supplemental data.")
-        for frequency, tab in zip(("day", "5min"), st.tabs(["Daily model view", "Five-minute model view"])):
+            st.caption("成交量为股数。这是公开市场的原始价格，不是补充数据源。")
+        for frequency, tab in zip(("day", "5min"), st.tabs(["日线模型视角", "五分钟模型视角"])):
             with tab:
                 params = {"frequency": frequency}
                 if context != "standalone":
@@ -375,18 +404,16 @@ def stocks(call, table, local_time):
                     st.json(result)
                 scores = call("GET", f"/research-stocks/{code}/scores?frequency={frequency}&limit=100")
                 if isinstance(scores, dict) and scores.get("items"):
-                    st.caption(
-                        "Historical Qlib scores/ranks with original feature cutoff and observation time; not actionable proposals."
-                    )
+                    st.caption("历史 Qlib 得分与排名，附原始特征截点与观测时间；不是可执行建议。")
                     table(scores["items"])
                     st.line_chart(pd.DataFrame(scores["items"]).set_index("feature_cutoff")[["score"]])
                 else:
-                    st.info("Qlib score history unavailable for this stock and frequency.")
-        with st.expander("Supplemental research data · separate from canonical prices"):
+                    st.info("该股票在该频率下暂无 Qlib 得分历史。")
+        with st.expander("补充研究数据 · 与规范价格相互独立"):
             from quant_platform.dashboard.research import snapshot_panel
 
             snapshot_panel(call, table, "stock:" + code, code=code)
-        if st.button("Add to watchlist for next-session pool"):
+        if st.button("加入观察池（供下一交易日使用）"):
             watch = call("GET", "/watchlist")
             if watch is not None:
                 result = call(
@@ -395,12 +422,12 @@ def stocks(call, table, local_time):
                     {"symbols": sorted(set(watch["symbols"]) | {code}), "expected_revision": watch["revision"]},
                 )
                 if result is not None:
-                    st.success("Watchlist updated. The stock remains warming_up until history is ready.")
-    with st.expander("Watchlist"):
+                    st.success("观察池已更新。历史数据就绪前，该股票保持预热状态。")
+    with st.expander("观察池"):
         watch = call("GET", "/watchlist")
         if watch is not None:
-            text = st.text_area("Symbols separated by commas", value=", ".join(watch["symbols"]))
-            if st.button("Save watchlist"):
+            text = st.text_area("股票代码（逗号分隔）", value=", ".join(watch["symbols"]))
+            if st.button("保存观察池"):
                 result = call(
                     "PUT",
                     "/watchlist",
@@ -410,7 +437,7 @@ def stocks(call, table, local_time):
                     },
                 )
                 if result is not None:
-                    st.success("Watchlist revision saved for the next-session pool.")
+                    st.success("观察池版本已保存，供下一交易日使用。")
 
 
 def scan(call, table, local_time):
@@ -418,21 +445,17 @@ def scan(call, table, local_time):
     if current is None:
         return
     policy = current["data"]
-    st.warning(
-        "Low nominal share price does not imply low risk or undervaluation. Scores are model ranks, not probabilities."
-    )
+    st.warning("名义股价低不代表风险低或估值低。得分是模型排名，不是概率。")
     with st.form(f"scan_policy_{current['revision']}"):
-        price = st.number_input("Maximum raw price (CNY)", min_value=0.01, value=float(policy["price_ceiling"]))
+        price = st.number_input("最高原始股价（元）", min_value=0.01, value=float(policy["price_ceiling"]))
         turnover = st.number_input(
-            "Minimum 20-session turnover (CNY)", min_value=0.0, value=float(policy["minimum_turnover"])
+            "20 日最小成交额（元）", min_value=0.0, value=float(policy["minimum_turnover"])
         )
         sessions = st.number_input(
-            "Minimum listed sessions", min_value=60, max_value=2000, value=int(policy["minimum_sessions"])
+            "最小上市交易日数", min_value=60, max_value=2000, value=int(policy["minimum_sessions"])
         )
-        st.caption(
-            "Risk warnings are excluded. Policy changes invalidate prior reports and require a qualified matching release."
-        )
-        submitted = st.form_submit_button("Save policy revision")
+        st.caption("风险警示股票已被排除。策略变更会使既有报告失效，并要求匹配一个已合格的发布版本。")
+        submitted = st.form_submit_button("保存策略版本")
     if submitted:
         try:
             value = ScanPolicy.model_validate(
@@ -445,13 +468,13 @@ def scan(call, table, local_time):
                 "PUT", "/scan-policy", {"policy": value.model_dump(), "expected_revision": current["revision"]}
             )
             if result is not None:
-                st.session_state.notice = "Policy revision saved. Qualify a matching model before publication."
+                st.session_state.notice = "策略版本已保存。发布前请先合格化一个匹配的模型。"
                 st.rerun()
-    if st.button("Run or reuse daily Qlib inference"):
+    if st.button("运行或复用当日 Qlib 推理"):
         request_run(call, "day")
     report = latest(call, "day")
     if report:
-        st.subheader("Qlib-ranked low-price candidates")
+        st.subheader("Qlib 排序的低价候选")
         table(report["data"].get("candidates"))
     show_report(call, table, local_time, report, accept_changes=True)
 
@@ -459,94 +482,99 @@ def scan(call, table, local_time):
 def models(call, table):
     from quant_platform.dashboard.research import factor_library, experiment_panel
 
-    release, factors, experiments = st.tabs(
-        ["Releases & diagnostics", "Factor library", "Experiments & configurations"]
-    )
+    release, factors, experiments = st.tabs(["发布与诊断", "因子库", "实验与配置"])
     with release:
         release_models(call, table)
     with factors:
-        st.caption("Experimental definitions cannot be accepted as target weights.")
+        st.caption("实验性定义不能被采纳为目标权重。")
         factor_library(call, table)
     with experiments:
         experiment_panel(call, table)
 
 
 def release_models(call, table):
-    frequency = st.selectbox("Model frequency", ["day", "5min"])
-    if st.button("Train challenger"):
+    frequency = st.selectbox(
+        "模型频率", ["day", "5min"], format_func=lambda value: FREQUENCIES.get(value, value)
+    )
+    if st.button("训练候选模型"):
         request_run(call, frequency, "training")
     versions = call("GET", "/models") or []
     table(versions, columns=["id", "frequency", "state", "passed", "created_at", "expires_at"])
     choices = [m for m in versions if m["frequency"] == frequency]
     if not choices:
-        st.info("No models. Backfill and validate history before training; no sample release is provided.")
+        st.info("暂无模型。训练前请先补齐并验证历史数据；平台不提供示例发布版本。")
         return
-    model = st.selectbox("Inspect model", choices, format_func=lambda m: f"{m['id']} · {m['state']}")
+    model = st.selectbox(
+        "查看模型详情", choices, format_func=lambda m: f"{m['id']} · {STATES.get(m['state'], m['state'])}"
+    )
     st.json({"evaluation": model["evaluation"], "artifacts": model["metadata"]})
     st.caption(
-        "Simulated evaluation is not brokerage P&L. Promotion requires 20 healthy production sessions in the same workflow lineage, this model's own evidence, and freshness."
+        "模拟评估不等于券商盈亏。晋级需要在同一工作流谱系中积累 20 个健康的生产交易日、该模型自身的证据，"
+        "以及时效性。"
     )
     table(call("GET", f"/models/{model['id']}/shadow-observations"))
-    with st.expander("Realized quality, drift, and training importance"):
+    with st.expander("实现质量、漂移与训练重要性"):
         from quant_platform.dashboard.research import diagnostics_panel
 
         diagnostics_panel(call, table, model["id"])
-    if model["state"] == "shadow" and st.button("Observe challenger on latest live cutoff"):
+    if model["state"] == "shadow" and st.button("在最新实盘截点上观察候选模型"):
         request_run(call, frequency, "shadow", model_id=model["id"])
     active = next((m for m in versions if m["frequency"] == frequency and m["state"] == "active"), None)
-    confirmed = st.checkbox("I reviewed evaluation, lineage evidence, policy, and model age.")
+    confirmed = st.checkbox("我已复核评估、谱系证据、策略与模型时效。")
     action = "rollback" if model["state"] == "retired" else "promote"
     if st.button(
-        "Rollback approved Qlib release" if action == "rollback" else "Promote Qlib release",
+        "回滚已发布的 Qlib 版本" if action == "rollback" else "发布 Qlib 版本",
         disabled=not confirmed or model["state"] not in {"shadow", "retired"},
     ):
         result = call(
             "POST", f"/models/{model['id']}/{action}", {"expected_active_id": active["id"] if active else None}
         )
         if result is not None:
-            st.session_state.notice = "Qlib release activated. No native fallback is available."
+            st.session_state.notice = "Qlib 发布版本已激活。平台没有原生替代方案。"
             st.rerun()
 
 
 def pipeline(call, table, operations):
     from quant_platform.dashboard.research import source_panels
 
-    with st.expander("Research sources, collection, and quality center"):
+    with st.expander("研究数据源、采集与质量中心"):
         source_panels(call, table)
     readiness(call)
     runs = call("GET", "/pipeline-runs") or []
     table(runs, columns=["id", "frequency", "purpose", "as_of", "state", "error"])
     if runs:
-        chosen = st.selectbox("Pipeline run", runs, format_func=lambda r: f"{r['id']} · {r['state']}")
+        chosen = st.selectbox(
+            "流水线运行", runs, format_func=lambda r: f"{r['id']} · {STATES.get(r['state'], r['state'])}"
+        )
         detail = call("GET", f"/pipeline-runs/{chosen['id']}")
         if detail:
             table(detail["steps"])
-            with st.expander("Pinned input snapshot and step results"):
+            with st.expander("已固定的输入快照与步骤结果"):
                 st.json(detail)
         retryable = chosen["state"] in {"blocked", "failed"} and not (
             chosen["frequency"] == "5min" and chosen["purpose"] in {"inference", "shadow"}
         )
-        if st.button("Retry same immutable inputs", disabled=not retryable):
+        if st.button("用相同输入重试", disabled=not retryable):
             result = call("POST", f"/pipeline-runs/{chosen['id']}/retry")
             if result is not None:
-                st.success("Retry requested. Changed inputs require a new run.")
-    with st.expander("Immutable Qlib generations"):
+                st.success("已请求重试。输入发生变化时请新建一次运行。")
+    with st.expander("不可变 Qlib 数据代次"):
         table(
             call("GET", "/qlib-generations"),
             columns=["id", "frequency", "origin", "watermark", "as_of", "contract", "path", "created_at"],
         )
-    with st.expander("Collection, permissions, jobs, and recovery"):
+    with st.expander("采集、权限、任务与恢复"):
         operations()
-    with st.expander("Legacy native reports · read-only archive"):
-        st.warning("legacy_native: excluded from current recommendations and acceptance.")
+    with st.expander("历史原生报告 · 只读归档"):
+        st.warning("legacy_native：不纳入当前建议与采纳流程。")
         reports = call("GET", "/reports?limit=100") or []
         if reports:
             chosen = st.selectbox(
-                "Legacy report", reports, format_func=lambda r: f"{r['as_of']} · {r['kind']} · {r['id']}"
+                "历史报告", reports, format_func=lambda r: f"{r['as_of']} · {r['kind']} · {r['id']}"
             )
             st.json(chosen)
             st.download_button(
-                "Export legacy report",
+                "导出历史报告",
                 json.dumps(chosen, ensure_ascii=False, indent=2),
                 "legacy-report.json",
                 "application/json",
@@ -556,14 +584,14 @@ def pipeline(call, table, operations):
 def render(page, call, table, local_time, operations):
     if page == "Overview":
         readiness(call)
-        for frequency, tab in zip(("day", "5min"), st.tabs(["Daily", "Five-minute"])):
+        for frequency, tab in zip(("day", "5min"), st.tabs(["日线", "五分钟"])):
             with tab:
                 show_report(call, table, local_time, latest(call, frequency))
         operations(compact=True)
     elif page == "My Model Portfolio":
         portfolios(call, table, local_time)
     elif page == "Stock Research":
-        report_tab, model_tab = st.tabs(["量化分析报告", "Model views"])
+        report_tab, model_tab = st.tabs(["量化分析报告", "模型视角"])
         with report_tab:
             market_report(call, table, local_time)
         with model_tab:

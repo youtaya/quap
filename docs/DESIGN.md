@@ -709,7 +709,7 @@ QUAP 是一个**单人操作员的 A 股研究工作台**。它的用户不是�
 | 2 | 其中下游几条是上游卡点的**必然后果** | 同上 | 修完根因回来仍显示 Blocked，以为没修好 |
 | 3 | 成功提示**主动把用户送走** | `dashboard/workflow.py`：`st.success("Run … Follow progress in Data & Pipeline.")` | 每修一步都要离开当前空间 |
 
-第 2 条是往返的真正机制。`no approved, qualified, unexpired Qlib model` 与 `no validated Qlib generation` 都是 `unverified capabilities` 的下游结果，**它们不是三个问题，是一个问题被摊成了三行**。
+第 2 条是往返的真正机制。`没有已发布、已合格且未过期的 Qlib 模型` 与 `没有已验证的 Qlib 数据代次` 都是 `数据源未验证` 的下游结果，**它们不是三个问题，是一个问题被摊成了三行**。
 
 补充一处源码事实：`pipeline.py` 中「模型」检查（`models[freq] is None`）排在「数据代次」检查（`not any(g["frequency"] == freq …)`）**之前**，但真实依赖是「先有代次、才谈得上模型」。即**抛出顺序 ≠ 依赖顺序**，这是平铺列表误导操作员的又一个来源。
 
@@ -746,7 +746,7 @@ QUAP 是一个**单人操作员的 A 股研究工作台**。它的用户不是�
 
 | # | 阶段 | 门禁 | 源码判定条件 | 依赖 |
 |---|---|---|---|---|
-| ① | 一 · 基础就绪 | 数据源验证 | `unverified capabilities: …`（该能力无成功采集记录） | 独立 |
+| ① | 一 · 基础就绪 | 数据源验证 | `数据源未验证：…`（该能力无成功采集记录） | 独立 |
 | ② | 一 · 基础就绪 | 采集范围 | `settings.history_scope != "all"` | 独立 |
 | ③ | 一 · 基础就绪 | Qlib 引擎 | `role not in roles or "qlib-data" not in roles` | 独立 |
 | ④ | 二 · 数据与模型 | 数据代次 | `not any(g["frequency"] == freq for g in generations)` | 依赖 ①②③ |
@@ -781,14 +781,16 @@ QUAP 是一个**单人操作员的 A 股研究工作台**。它的用户不是�
 
 | 源码字符串 | 判决句（`verdict-reason`） | 动作类型 |
 |---|---|---|
-| `unverified capabilities: history, factors` | 卡在**数据源验证**：7 个日线接口里有 2 个从未成功完成一次真实采集，因此平台不承认这份数据，也就不会拿它训练或推理。 | 可自解 |
-| `history scope is '…'; production acceptance requires …` | 卡在**采集范围**：当前只采了部分市场，生产验收要求全市场 ≥95% 覆盖。 | 半自解 |
-| `required Qlib workers unavailable` | 卡在 **Qlib 引擎**：三个工作进程都没有心跳，训练与推理都无法执行。**这一步在平台里点不出来，需要有人去启动服务。** | 需运维 |
-| `no validated Qlib generation` | 卡在**数据代次**：今天还没有一份通过验证的数据导出。 | 可自解 |
-| `no approved, qualified, unexpired Qlib model` | 卡在**模型发布**：没有一份「已评估通过 + 已批准 + 未过期」的模型。 | 半自解 |
-| `daily model baseline unavailable` | 五分钟叠加的独立卡点，**不影响日线判决** | 需运维 |
+| `数据源未验证：history、factors` | 卡在**数据源验证**：7 个日线接口里有 2 个从未成功完成一次真实采集，因此平台不承认这份数据，也就不会拿它训练或推理。 | 可自解 |
+| `采集范围为「…」；生产验收要求 …` | 卡在**采集范围**：当前只采了部分市场，生产验收要求全市场 ≥95% 覆盖。 | 半自解 |
+| `必需的 Qlib 服务未就绪` | 卡在 **Qlib 引擎**：三个工作进程都没有心跳，训练与推理都无法执行。**这一步在平台里点不出来，需要有人去启动服务。** | 需运维 |
+| `没有已验证的 Qlib 数据代次` | 卡在**数据代次**：今天还没有一份通过验证的数据导出。 | 可自解 |
+| `没有已发布、已合格且未过期的 Qlib 模型` | 卡在**模型发布**：没有一份「已评估通过 + 已批准 + 未过期」的模型。 | 半自解 |
+| `缺少日线模型基线` | 五分钟叠加的独立卡点，**不影响日线判决** | 需运维 |
 
 注意：⑤ 的判决句只在 ④ 已通过时才成为判决句；否则 ⑤ 显示「等待上游」。同理 ⑥。
+
+> **P0 与 P2 的分界。** 上表的「源码字符串」是 `pipeline.py` 直接产出的**原始** blocker，P0 已把它写成中文（原先在仪表盘里做英译中的字符串匹配翻译，会随新增门禁立刻失真，故改为在源头落地）。但「原始 blocker 直接 `st.warning` 展示」这件事本身要到 P2 才消除：P2 之后这些字符串只作为**输入**，页面上出现的是判决句。
 
 **5 分钟叠加的表达**：五分钟受阻**不进入日线判决句**，只在判决条底部作为一行徽标出现（「五分钟叠加：同样受阻 · 不影响日线建议的解锁」）。两条频率的判决必须解耦，否则操作员会以为日线也被拖住了。
 
@@ -804,18 +806,27 @@ QUAP 是一个**单人操作员的 A 股研究工作台**。它的用户不是�
 
 ### A.7 文案对照（英文 → 中文）
 
+**P0 已落地**（7 个平级工作空间，显示名与页标题描述）：
+
+| 工作空间键（路由标识符，保持英文） | 显示名 | 页标题描述 |
+|---|---|---|
+| `Overview` | 今日 | 今天能不能出建议，以及为什么。 |
+| `My Model Portfolio` | 我的组合 | 查看基线权重与现金，采纳版本化的 Qlib 建议。 |
+| `Stock Research` | 个股研究 | 查看行情与模型视角，不代表券商持仓。 |
+| `Qlib Report` | 研究报告 | 因子 IC、前瞻收益分位与相对基准的等权组合。 |
+| `Low-Price Scan` | 选股发现 | 用 Qlib 预测给低价股排序，而不是按便宜程度。 |
+| `Models & Validation` | 模型与验证 | 在人工发布前查看评估与影子证据。 |
+| `Data & Pipeline` | 运行记录与配置 | 追溯前置条件、不可变代次、依赖关系与定向重试。 |
+
+> **键与显示名必须分离。** 工作空间的键是路由标识符：侧边栏单选把它交给 `render`，`render` 再拿它做 `page ==` 比较；界面测试也用键来驱动导航（`radio.set_value("My Model Portfolio")`）。所以键保持英文，中文只落在 `WORKSPACE_LABELS` 上，不得直接改键。
+
+**P0 其余对照：**
+
 | 现文案 | 新文案 |
 |---|---|
-| Overview / "Are daily and five-minute recommendations ready?" | 今日 / "今天能不能出建议，以及为什么" |
-| My Model Portfolio | 我的组合 |
-| Stock Research | 个股研究 |
-| Qlib Report | 模型与报告 |
-| Low-Price Scan | 选股发现 |
-| Models & Validation | 模型与报告 › 验证与发布 |
-| Data & Pipeline | 运行记录与配置 |
 | Collection controls / Update source data | 数据采集 / 立即采集 |
 | Check provider capabilities | 检查数据源 |
-| Model portfolio / Cash fraction / Target fraction | 我的组合 / 现金比例 / 目标权重 |
+| Model portfolio / Cash fraction / Target fraction | 模型组合 / 现金比例 / 目标权重 |
 | Save next-session baseline | 保存为下一交易日基线 |
 | Changes to accept | 本次采纳的调整 |
 | Daily proposal / Five-minute overlay | 日线建议 / 五分钟叠加 |
@@ -823,10 +834,15 @@ QUAP 是一个**单人操作员的 A 股研究工作台**。它的用户不是�
 | Portfolio context / Standalone model view | 组合上下文 / 独立模型视角 |
 | Train challenger / Inspect model | 训练候选模型 / 查看模型详情 |
 | Pipeline run / Retry same immutable inputs | 流水线运行 / 用相同输入重试 |
-| Immutable Qlib generations | 不可变数据代次 |
+| Immutable Qlib generations | 不可变 Qlib 数据代次 |
 | Proposed cash / Ready / Blocked | 建议现金比例 / 已就绪 / 受阻 |
-| unverified capabilities: … | 卡在数据源验证：…（见 A.5 映射表） |
-| no approved, qualified, unexpired Qlib model | 卡在模型发布：…（见 A.5） |
+| Factor name / Factor author / Factor-set name | 因子名称 / 因子作者 / 因子集名称 |
+| Training-configuration name / Feature contract | 训练配置名称 / 特征契约 |
+| Compare development folds / Freeze candidate specification | 比较开发折 / 冻结候选配置 |
+| Explicit stock codes (comma-separated, at most 50) | 显式股票代码（逗号分隔，最多 50 只） |
+| Legacy native reports · read-only archive | 历史原生报告 · 只读归档 |
+
+**blocker 文案已改在源头。** `数据源未验证：…` / `没有已发布、已合格且未过期的 Qlib 模型` 等六条不再以英文出现在界面：它们由 `pipeline.py` 直接产出中文，而不是由仪表盘做字符串匹配翻译（新增门禁时匹配必然失真）。P2 之后它们只作为判决句的输入，见 A.5。
 
 
 ## 附录 B：统一状态语言
@@ -902,7 +918,7 @@ QUAP 是一个**单人操作员的 A 股研究工作台**。它的用户不是�
 
 | 阶段 | 内容 | 风险 | 收益 |
 |---|---|---|---|
-| **P0 文案中文化** | 7 个工作空间名称与描述、全部按钮/标签/表头/空状态改为中文；术语加问号气泡 | 极低（纯字符串） | 消除「中英混杂」这一最直观问题 |
+| **P0 文案中文化** | **已落地。** 7 个工作空间的显示名与描述、四个 dashboard 文件的全部按钮/标签/表头/空状态/提示、`LABELS`/`VALUES` 补全表格列与枚举取值、`client.py` 的传输层错误文案；六条 blocker 文案改在 `pipeline.py` 源头而非前端匹配翻译。术语问号气泡未做 | 极低（纯字符串） | 消除「中英混杂」这一最直观问题 |
 | **P1 状态语言统一** | 六状态色板 + 三载体；顶栏收敛为一行徽标（**且徽标不得表达判决**） | 低 | 页面噪音大幅下降 |
 | **P2 判决面** | 「今日」重构为判决条 + 解锁链路；`blockers` 平铺数组 → 依赖链（A.3）；卡点就地展开 + 动作类型三分（A.4）；`pipeline.py` 暴露结构化 blocker（带阶段与依赖字段）而非字符串数组 | 中高（需改后端 blocker 结构） | **消灭三个空间的一次往返**；「数据与任务」得以降级为只读 |
 | **P3 信息密度收敛** | L3 明细全部移入抽屉；空状态补「下一步」操作 | 中（需新增抽屉组件） | 页面从"调试界面"变为"产品" |
