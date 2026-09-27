@@ -30,6 +30,16 @@ The working tree adds isolated supplemental sources, immutable factor/configurat
 - 架构图：[docs/architecture.svg](docs/architecture.svg)
 - [QUAP 平台专家包](experts/quap-platform-expert/README.md) — WorkBuddy 专家包「衡工」：平台架构、Qlib 流水线排障、部署与备份恢复
 
+### Design
+
+Two-layer design contract. Each layer has exactly one authority; see [docs/UI-DESIGN.md](docs/UI-DESIGN.md) §0 for the conflict-resolution table.
+
+- [docs/UI-DESIGN.md](docs/UI-DESIGN.md) — interface layer delivery contract: token rules, component inventory and required states, colour-semantics decision rules, responsive baselines, accessibility acceptance criteria, motion spec, Streamlit rollout order
+- [docs/prototype/quap-ui-kit.html](docs/prototype/quap-ui-kit.html) — **authority for token values and component visuals**. Open in a browser; the two top-bar switches toggle dimension annotations and forced keyboard-focus rings
+- [docs/prototype/quap-decision-surface.html](docs/prototype/quap-decision-surface.html) — **authority for the decision surface (c13)**: the single screen that answers "can we issue a recommendation today?". Four verdict scenarios (unverified data source / engine offline / ready-but-not-generated / recommendation ready) plus a "before" comparison view that replays the flat warning list and the three-space round trip
+- [docs/DESIGN.md](docs/DESIGN.md) — interaction layer: decision-first information architecture, dependency-chain model, unified status language, three-level information density, copy mapping
+- [docs/prototype/quap-interaction-design.html](docs/prototype/quap-interaction-design.html) — clickable interaction prototype (⌘K command palette, detail drawer, mobile tab bar)
+
 ## Local development
 
 Use Python 3.11 or 3.12 and [uv](https://docs.astral.sh/uv/). The package is `quant_platform`; the CLI is `quant-platform`. From the repository root:

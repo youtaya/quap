@@ -1,0 +1,1087 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>QUAP 知衡量化 · 今日判决页</title>
+<style>
+/* ============================================================
+   令牌 — 与 docs/prototype/quap-ui-kit.html 的 :root 同值
+   （界面层唯一权威在 UI Kit，此处为派生副本）
+   ============================================================ */
+:root{
+  --brand-700:#1d3f7d; --brand-600:#2a55c8; --brand-500:#3567d6; --brand-400:#6b93e6;
+  --brand-200:#c7d8f7; --brand-100:#e4ecfc; --brand-50:#f2f6fd;
+  --navy-950:#0c182e; --navy-900:#122340; --navy-800:#1a3055; --navy-700:#24406e;
+  --nav-100:#a8bcd9; --nav-200:#dce6f5; --nav-300:#7b8fb3;
+  --nav-ok:#5cc79a; --nav-err:#f0848c;
+  --on-brand:#ffffff;
+  --ink-900:#0e1c33; --ink-700:#2b3c57; --ink-500:#5b6c86; --ink-200:#aab6c8;
+  --canvas:#f5f7fb; --surface-1:#ffffff; --surface-2:#fbfcfe; --surface-3:#eef2f8;
+  --hairline:#e3e9f3; --hairline-strong:#cfd8e6;
+  --quote-up:#d32935; --quote-up-bg:#fdeef0;
+  --quote-down:#0c8050; --quote-down-bg:#e8f7f0;
+  --quote-flat:#5b6c86;
+  --state-ok:#117e56; --state-ok-bg:#e6f5ee;
+  --state-warn:#a36100; --state-warn-bg:#fff4e0;
+  --state-error:#c8303c; --state-error-bg:#fdecee;
+  --state-info:#2a55c8; --state-info-bg:#e8effc;
+  --state-busy:#6a5ad2; --state-busy-bg:#efecfc;
+  --state-idle:#5e6f88; --state-idle-bg:#eef1f6;
+  --state-ok-line:#bfe4d4;
+  --state-info-line:#c9daf5;
+  --state-warn-line:#f0dcb4;
+  --state-error-line:#f2c9cd;
+  --font-sans:"Inter",-apple-system,BlinkMacSystemFont,"PingFang SC","HarmonyOS Sans SC","Microsoft YaHei","Source Han Sans SC",system-ui,sans-serif;
+  --font-num:"JetBrains Mono","SF Mono",ui-monospace,Menlo,Consolas,monospace;
+  --shadow-xs:0 1px 2px rgba(16,39,77,.06);
+  --shadow-sm:0 1px 3px rgba(16,39,77,.07),0 1px 2px rgba(16,39,77,.04);
+  --shadow-md:0 4px 12px rgba(16,39,77,.08),0 1px 3px rgba(16,39,77,.05);
+  --shadow-lg:0 12px 32px rgba(16,39,77,.10),0 2px 8px rgba(16,39,77,.06);
+  --shadow-xl:0 24px 64px rgba(16,39,77,.14),0 4px 16px rgba(16,39,77,.07);
+  --shadow-focus:0 0 0 3px rgba(53,103,214,.22);
+  --ease-out:cubic-bezier(.32,.72,0,1);
+  --ease-inout:cubic-bezier(.4,0,.2,1);
+  --dur-fast:120ms; --dur-base:180ms; --dur-slow:240ms;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  font-family:var(--font-sans);font-size:14px;line-height:1.6;color:var(--ink-700);
+  background:var(--canvas);-webkit-font-smoothing:antialiased;
+  /* 桌面端锁视口：外壳自己分配高度，只有内容区滚动；移动端在 ≤900px 放开 */
+  height:100vh;overflow:hidden;display:flex;flex-direction:column;
+}
+.num,.mono{font-variant-numeric:tabular-nums}
+.mono{font-family:var(--font-num)}
+button{font-family:inherit}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-thumb{background:var(--hairline-strong);border-radius:6px;border:3px solid transparent;background-clip:content-box}
+
+/* ============ 设计演示工具条（不属于产品界面） ============ */
+.devbar{
+  position:sticky;top:0;z-index:900;background:var(--navy-950);color:var(--nav-200);
+  display:flex;align-items:center;gap:20px;padding:10px 20px;flex-wrap:wrap;
+}
+.devbar-tag{
+  font-size:10px;font-weight:600;letter-spacing:.6px;padding:2px 7px;border-radius:4px;
+  background:rgba(255,255,255,.12);color:var(--nav-100);white-space:nowrap;
+}
+.devbar-group{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.devbar-label{font-size:11px;color:var(--nav-300);white-space:nowrap}
+.seg{display:inline-flex;background:rgba(255,255,255,.08);border-radius:8px;padding:3px;gap:2px;flex-wrap:wrap}
+.seg button{
+  border:0;background:transparent;color:var(--nav-100);font-size:12px;font-weight:500;
+  padding:5px 11px;border-radius:6px;cursor:pointer;white-space:nowrap;transition:background var(--dur-fast),color var(--dur-fast);
+}
+.seg button:hover{background:rgba(255,255,255,.10);color:#fff}
+.seg button[aria-pressed="true"]{background:var(--brand-500);color:#fff}
+.seg button:focus-visible{outline:none;box-shadow:var(--shadow-focus)}
+
+/* ============ 产品外壳 ============ */
+.view{display:none}
+.view.is-active{display:flex;flex-direction:column;flex:1;min-height:0}
+/* 判决场景：同一时刻只呈现一个判决 */
+.scene{display:none}
+.scene.is-active{display:block}
+.app{display:flex;flex:1;min-height:0;overflow:hidden}
+
+/* ---- 侧边栏 ---- */
+.sidebar{
+  width:248px;flex:0 0 248px;background:var(--navy-900);display:flex;flex-direction:column;
+  padding:20px 14px;overflow-y:auto;
+}
+.brand{display:flex;align-items:center;gap:11px;padding:0 8px 18px}
+.brand-logo{
+  width:36px;height:36px;border-radius:10px;background:var(--brand-500);color:#fff;
+  display:grid;place-items:center;font-weight:800;font-size:20px;flex:0 0 36px;
+}
+.brand-name{font-size:16px;font-weight:700;color:var(--nav-200);line-height:1.25}
+.brand-sub{font-size:10px;letter-spacing:1.6px;color:var(--nav-300);font-weight:500}
+.nav-group-title{font-size:11px;font-weight:500;letter-spacing:.3px;color:var(--nav-300);padding:14px 12px 6px}
+.nav-item{
+  display:flex;align-items:center;gap:10px;height:36px;padding:0 12px;border-radius:8px;
+  color:var(--nav-100);font-size:14px;cursor:pointer;transition:background var(--dur-fast),color var(--dur-fast);
+  border:0;background:transparent;width:100%;text-align:left;
+}
+.nav-item:hover{background:var(--navy-800);color:var(--nav-200)}
+.nav-item.is-active{background:var(--brand-500);color:#fff;font-weight:500}
+.nav-item svg{flex:0 0 16px;opacity:.9}
+.nav-tail{margin-left:auto;display:flex;align-items:center;gap:5px}
+.nav-badge{
+  font-size:10px;font-weight:600;padding:1px 6px;border-radius:999px;
+  background:rgba(255,255,255,.16);color:var(--nav-200);font-variant-numeric:tabular-nums;
+}
+.nav-item.is-active .nav-badge{background:rgba(255,255,255,.24);color:#fff}
+/* 常驻判决块 —— 操作员在任何空间都能看到今天能不能出建议。
+   刻意不放进导航项：导航项的选中底是 --brand-500，红/绿在其上连 3:1 都达不到，
+   标记颜色会随选中态失效。判决是全局状态，不是导航项的属性。 */
+.verdict-mini{
+  margin:2px 0 8px;padding:10px 12px;border-radius:8px;
+  border-left:3px solid transparent;
+}
+.verdict-mini.err{border-left-color:var(--nav-err)}
+.verdict-mini.ok{border-left-color:var(--nav-ok)}
+.verdict-mini-k{font-size:10px;letter-spacing:.4px;color:var(--nav-100);margin-bottom:3px}
+.verdict-mini-v{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600;line-height:1.4}
+.verdict-mini.err .verdict-mini-v{color:var(--nav-err)}
+.verdict-mini.ok .verdict-mini-v{color:var(--nav-ok)}
+.sidebar-foot{margin-top:auto;padding:18px 12px 0;border-top:1px solid var(--navy-700)}
+.sidebar-note{font-size:11px;line-height:1.9;color:var(--nav-300)}
+.sidebar-note b{color:var(--nav-100);font-weight:500}
+
+/* ---- 主区 ---- */
+.main{flex:1;display:flex;flex-direction:column;min-width:0}
+.topbar{
+  height:60px;flex:0 0 60px;background:var(--surface-1);border-bottom:1px solid var(--hairline);
+  display:flex;align-items:center;gap:14px;padding:0 28px;z-index:10;
+}
+.topbar-title{font-size:16px;font-weight:600;color:var(--ink-900);letter-spacing:-.1px;white-space:nowrap}
+.topbar-desc{font-size:12px;color:var(--ink-500);padding-left:12px;border-left:1px solid var(--hairline);white-space:nowrap}
+.topbar-right{margin-left:auto;display:flex;align-items:center;gap:10px}
+.search-trigger{
+  display:flex;align-items:center;gap:8px;height:32px;padding:0 10px 0 12px;border-radius:8px;
+  border:1px solid var(--hairline-strong);background:var(--surface-2);color:var(--ink-500);
+  font-size:13px;cursor:pointer;transition:border-color var(--dur-fast);
+}
+.search-trigger:hover{border-color:var(--brand-400)}
+.kbd{font-family:var(--font-num);font-size:10px;font-weight:500;padding:2px 5px;border-radius:4px;background:var(--surface-1);border:1px solid var(--hairline-strong);color:var(--ink-500)}
+.content{flex:1;overflow-y:auto;padding:28px 28px 64px}
+.wrap{max-width:1120px;margin:0 auto}
+
+/* ============ 徽标 ============ */
+.badge{
+  display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:500;
+  padding:2px 9px;border-radius:999px;white-space:nowrap;line-height:1.6;
+}
+.badge::before{content:"";width:5px;height:5px;border-radius:50%;background:currentColor;flex:0 0 5px}
+.badge.ok{background:var(--state-ok-bg);color:var(--state-ok)}
+.badge.warn{background:var(--state-warn-bg);color:var(--state-warn)}
+.badge.err{background:var(--state-error-bg);color:var(--state-error)}
+.badge.info{background:var(--state-info-bg);color:var(--state-info)}
+.badge.busy{background:var(--state-busy-bg);color:var(--state-busy)}
+.badge.idle{background:var(--state-idle-bg);color:var(--state-idle)}
+
+/* ============ 按钮 ============ */
+.btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:7px;height:36px;padding:0 16px;
+  border-radius:8px;font-size:14px;font-weight:500;cursor:pointer;border:1px solid transparent;
+  transition:background var(--dur-fast) var(--ease-inout),border-color var(--dur-fast),color var(--dur-fast);
+  white-space:nowrap;line-height:1;text-decoration:none;
+}
+.btn:focus-visible{outline:none;box-shadow:var(--shadow-focus)}
+.btn-primary{background:var(--brand-500);color:#fff}
+.btn-primary:hover{background:var(--brand-600)}
+.btn-primary:active{background:var(--brand-700)}
+.btn-secondary{background:var(--surface-1);color:var(--ink-900);border-color:var(--hairline-strong)}
+.btn-secondary:hover{background:var(--surface-2);border-color:var(--brand-400);color:var(--brand-600)}
+.btn-ghost{background:transparent;color:var(--ink-700);height:32px;padding:0 10px;font-size:13px}
+.btn-ghost:hover{background:var(--surface-3);color:var(--ink-900)}
+.btn-lg{height:44px;padding:0 22px;font-size:15px}
+.btn-sm{height:30px;padding:0 12px;font-size:13px}
+.btn:disabled{background:var(--surface-3);color:var(--ink-200);border-color:transparent;cursor:not-allowed}
+
+/* ============ 判决条 ============ */
+.verdict{border-radius:12px;border:1px solid;padding:22px 24px;margin-bottom:22px}
+.verdict.blocked{background:var(--state-error-bg);border-color:var(--state-error-line)}
+.verdict.ready{background:var(--state-ok-bg);border-color:var(--state-ok-line)}
+.verdict-top{display:flex;align-items:flex-start;gap:16px}
+.verdict-icon{
+  width:44px;height:44px;border-radius:12px;flex:0 0 44px;display:grid;place-items:center;
+  font-size:22px;font-weight:700;line-height:1;
+}
+.verdict.blocked .verdict-icon{background:#fff;color:var(--state-error)}
+.verdict.ready .verdict-icon{background:#fff;color:var(--state-ok)}
+.verdict-body{flex:1;min-width:0}
+.verdict-eyebrow{
+  font-size:11px;font-weight:600;letter-spacing:.5px;text-transform:uppercase;margin-bottom:4px;
+}
+.verdict.blocked .verdict-eyebrow{color:var(--state-error)}
+.verdict.ready .verdict-eyebrow{color:var(--state-ok)}
+.verdict-sentence{font-size:24px;font-weight:700;letter-spacing:-.4px;color:var(--ink-900);line-height:1.3}
+.verdict-reason{font-size:14px;color:var(--ink-700);margin-top:7px;line-height:1.6}
+.verdict-reason b{color:var(--ink-900);font-weight:600}
+.verdict-action{margin-top:16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.verdict-note{font-size:12px;color:var(--ink-500)}
+.verdict-foot{
+  margin-top:16px;padding-top:14px;border-top:1px solid var(--hairline);
+  display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--ink-500);
+}
+/* 分隔线跟随所属面板的色相，避免在 tinted 底上出现冷灰线 */
+.verdict.blocked .verdict-foot{border-top-color:var(--state-error-line)}
+.verdict.ready .verdict-foot{border-top-color:var(--state-ok-line)}
+
+/* ============ 解锁链路 ============ */
+.section-head{display:flex;align-items:baseline;gap:10px;margin:0 0 12px}
+.section-head h2{font-size:16px;font-weight:600;color:var(--ink-900);letter-spacing:-.1px}
+.section-head p{font-size:12px;color:var(--ink-500)}
+
+.chain{background:var(--surface-1);border:1px solid var(--hairline);border-radius:12px;overflow:hidden}
+.stage{border-bottom:1px solid var(--hairline)}
+.stage:last-child{border-bottom:0}
+.stage-head{
+  display:flex;align-items:center;gap:10px;padding:11px 20px;background:var(--surface-2);
+  border-bottom:1px solid var(--hairline);
+}
+.stage-name{font-size:11px;font-weight:500;letter-spacing:.3px;color:var(--ink-500)}
+/* 阶段内部的依赖关系：并行检查（互相独立）vs 顺序依赖（前者不解则后者不动） */
+.stage-kind{font-size:10px;font-weight:600;letter-spacing:.3px;padding:1px 7px;border-radius:4px;white-space:nowrap}
+.stage-kind.par{background:var(--surface-3);color:var(--ink-500)}
+.stage-kind.seq{background:var(--brand-100);color:var(--brand-700)}
+.stage-head .badge{margin-left:auto}
+.stage-body{padding:4px 0}
+/* 并行阶段不画连接轨 —— 画了就是在说「① 之后才是 ②」，而它们其实互不依赖 */
+.stage.parallel .gate-rail{display:none}
+
+/* 门禁节点 */
+.gate{display:flex;gap:14px;padding:11px 20px;position:relative}
+.gate-rail{position:absolute;left:31px;top:34px;bottom:-4px;width:1px;background:var(--hairline)}
+.gate:last-child .gate-rail{display:none}
+.gate.is-done .gate-rail{background:var(--brand-200)}
+.gate-index{
+  width:22px;height:22px;border-radius:50%;flex:0 0 22px;display:grid;place-items:center;
+  font-family:var(--font-num);font-size:11px;font-weight:600;margin-top:1px;position:relative;z-index:1;
+  border:1px solid transparent;
+}
+.gate.is-done .gate-index{background:var(--brand-500);color:#fff}
+.gate.is-blocked .gate-index{background:var(--state-error);color:#fff}
+.gate.is-waiting .gate-index{background:var(--surface-3);color:var(--ink-500);border-color:var(--hairline-strong)}
+.gate.is-pending .gate-index{background:var(--surface-1);color:var(--brand-600);border-color:var(--brand-400)}
+.gate-body{flex:1;min-width:0}
+.gate-line{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.gate-name{font-size:14px;font-weight:500;color:var(--ink-900)}
+.gate.is-waiting .gate-name{color:var(--ink-500);font-weight:400}
+.gate-meta{font-size:12px;color:var(--ink-500);margin-left:auto;white-space:nowrap}
+.gate.is-blocked .gate-meta{color:var(--state-error);font-weight:500}
+.gate-desc{font-size:12px;color:var(--ink-500);margin-top:3px;line-height:1.6}
+.gate.is-waiting .gate-desc{color:var(--ink-200)}
+
+/* 卡点就地展开 */
+.fix{
+  margin:10px 0 4px;background:var(--surface-2);border:1px solid var(--hairline);
+  border-left:3px solid var(--state-error);border-radius:0 8px 8px 0;padding:14px 16px;
+}
+.fix.manual{border-left-color:var(--state-warn)}
+.fix-row{display:flex;gap:10px;font-size:13px;line-height:1.65;margin-bottom:8px}
+.fix-row:last-of-type{margin-bottom:0}
+.fix-key{flex:0 0 52px;color:var(--ink-500);font-size:12px}
+.fix-val{flex:1;min-width:0;color:var(--ink-700)}
+.fix-val b{color:var(--ink-900);font-weight:600}
+.fix-val .mono{font-size:12px;color:var(--ink-900);background:var(--surface-3);padding:1px 6px;border-radius:4px}
+.cmd{
+  display:block;font-family:var(--font-num);font-size:12px;line-height:1.7;color:var(--ink-900);
+  background:var(--surface-1);border:1px solid var(--hairline-strong);border-radius:6px;
+  padding:9px 12px;margin-top:6px;white-space:pre-wrap;overflow-wrap:break-word;
+}
+.fix-actions{display:flex;align-items:center;gap:10px;margin-top:13px;flex-wrap:wrap}
+.fix-hint{font-size:11px;color:var(--ink-500)}
+.tag-manual{
+  display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;
+  background:var(--state-warn-bg);color:var(--state-warn);padding:2px 8px;border-radius:4px;
+}
+.tag-auto{
+  display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;
+  background:var(--state-info-bg);color:var(--state-info);padding:2px 8px;border-radius:4px;
+}
+
+/* 链路图例 */
+.legend{
+  display:flex;gap:18px;flex-wrap:wrap;margin-top:12px;padding:12px 16px;
+  background:var(--surface-1);border:1px solid var(--hairline);border-radius:10px;
+}
+.legend-item{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ink-500)}
+.legend-swatch{width:14px;height:14px;border-radius:50%;flex:0 0 14px;display:grid;place-items:center;font-size:9px;font-weight:700}
+.legend-swatch.done{background:var(--brand-500);color:#fff}
+.legend-swatch.blocked{background:var(--state-error);color:#fff}
+.legend-swatch.waiting{background:var(--surface-3);border:1px solid var(--hairline-strong)}
+.legend-swatch.pending{background:var(--surface-1);border:1px solid var(--brand-400)}
+.legend-note{font-size:11px;color:var(--ink-500);margin-top:9px;line-height:1.7}
+
+/* ============ 建议卡 ============ */
+.suggest{
+  background:var(--surface-1);border:1px solid var(--hairline);border-radius:12px;overflow:hidden;
+}
+.suggest-head{display:flex;align-items:center;gap:12px;padding:16px 20px;border-bottom:1px solid var(--hairline);flex-wrap:wrap}
+.suggest-head h3{font-size:16px;font-weight:600;color:var(--ink-900);letter-spacing:-.1px}
+.suggest-head .badge{margin-left:auto}
+.suggest-body{padding:18px 20px}
+.kv{display:grid;grid-template-columns:repeat(4,1fr);gap:18px}
+.kv-item .k{font-size:11px;color:var(--ink-500);margin-bottom:4px}
+.kv-item .v{font-size:22px;font-weight:700;color:var(--ink-900);letter-spacing:-.4px;line-height:1.2}
+.kv-item .v small{font-size:12px;font-weight:400;color:var(--ink-500);letter-spacing:0;margin-left:5px}
+.tbl-wrap{overflow-x:auto;margin-top:18px;border:1px solid var(--hairline);border-radius:10px}
+table.tbl{width:100%;border-collapse:separate;border-spacing:0;font-size:13px}
+.tbl thead th{
+  background:var(--surface-3);color:var(--ink-500);font-size:11px;font-weight:500;letter-spacing:.3px;
+  height:34px;padding:0 12px;text-align:left;white-space:nowrap;
+}
+.tbl thead th:first-child{border-radius:8px 0 0 8px}
+.tbl thead th:last-child{border-radius:0 8px 8px 0}
+.tbl tbody td{height:38px;padding:0 12px;color:var(--ink-700);border-bottom:1px solid var(--hairline);font-variant-numeric:tabular-nums;white-space:nowrap}
+.tbl tbody tr:last-child td{border-bottom:0}
+.tbl .r{text-align:right}
+.tbl .strong{font-weight:600;color:var(--ink-900)}
+.up{color:var(--quote-up)}.down{color:var(--quote-down)}.flat{color:var(--quote-flat)}
+.tag{display:inline-flex;align-items:center;font-size:11px;font-weight:500;padding:2px 8px;border-radius:4px;background:var(--surface-3);color:var(--ink-700)}
+.tag-up{background:var(--quote-up-bg);color:var(--quote-up)}
+.tag-down{background:var(--quote-down-bg);color:var(--quote-down)}
+
+/* ============ 依据层 ============ */
+.evidence{background:var(--surface-1);border:1px solid var(--hairline);border-radius:12px;margin-top:18px}
+.evidence summary{
+  cursor:pointer;padding:13px 20px;font-size:13px;font-weight:500;color:var(--ink-900);
+  list-style:none;display:flex;align-items:center;gap:9px;
+}
+.evidence summary::-webkit-details-marker{display:none}
+.evidence summary::before{
+  content:"";width:0;height:0;border-left:5px solid var(--ink-500);border-top:4px solid transparent;
+  border-bottom:4px solid transparent;transition:transform var(--dur-fast);
+}
+.evidence[open] summary::before{transform:rotate(90deg)}
+.evidence-body{padding:0 20px 18px;border-top:1px solid var(--hairline)}
+.ev-table{width:100%;border-collapse:collapse;font-size:12px;margin-top:14px}
+.ev-table th{text-align:left;font-size:10px;font-weight:500;letter-spacing:.3px;color:var(--ink-500);padding:0 12px 6px 0;border-bottom:1px solid var(--hairline)}
+.ev-table td{padding:7px 12px 7px 0;border-bottom:1px solid var(--hairline);color:var(--ink-700);vertical-align:top}
+.ev-table tr:last-child td{border-bottom:0}
+.ev-table td.m{font-family:var(--font-num);font-variant-numeric:tabular-nums;white-space:nowrap}
+
+/* ============ 改造前对照视图 ============ */
+.old-sidebar{background:var(--navy-900)}
+.old-note{
+  background:var(--state-warn-bg);border:1px solid var(--state-warn-line);border-radius:12px;padding:18px 20px;margin-bottom:20px;
+}
+.old-note h3{font-size:14px;font-weight:600;color:var(--ink-900);margin-bottom:8px;display:flex;align-items:center;gap:8px}
+.old-note p{font-size:13px;color:var(--ink-700);line-height:1.7}
+.old-note p+p{margin-top:8px}
+.old-warn{
+  background:var(--state-warn-bg);border:1px solid var(--state-warn-line);border-radius:8px;padding:9px 13px;
+  font-size:13px;color:var(--state-warn);margin-bottom:8px;font-family:var(--font-num);
+  overflow-wrap:break-word;
+}
+.old-warn.downstream{opacity:.72}
+.old-warn-tag{
+  display:inline-block;font-family:var(--font-sans);font-size:10px;font-weight:600;
+  background:rgba(163,97,0,.14);padding:1px 6px;border-radius:4px;margin-right:8px;vertical-align:1px;
+}
+.old-metrics{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px}
+.old-metric{background:var(--surface-1);border:1px solid var(--hairline);border-radius:10px;padding:16px}
+.old-metric .k{font-size:12px;color:var(--ink-500);margin-bottom:6px}
+.old-metric .v{font-size:26px;font-weight:700;color:var(--state-error);letter-spacing:-.4px}
+.old-caption{font-size:12px;color:var(--ink-500);margin:14px 0}
+.old-btns{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}
+.route{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:14px}
+.route-step{
+  display:inline-flex;align-items:center;gap:7px;font-size:12px;font-weight:500;
+  background:var(--surface-1);border:1px solid var(--hairline-strong);border-radius:8px;padding:7px 12px;color:var(--ink-900);
+}
+.route-step.hop{background:var(--state-error-bg);border-color:var(--state-error-line);color:var(--state-error)}
+.route-arrow{color:var(--ink-200);font-size:14px}
+.route-loop{font-size:11px;color:var(--ink-500);margin-top:9px}
+
+/* ============ 对照表 ============ */
+.cmp{width:100%;border-collapse:collapse;font-size:13px;background:var(--surface-1);border:1px solid var(--hairline);border-radius:12px;overflow:hidden}
+.cmp th{
+  text-align:left;font-size:11px;font-weight:500;letter-spacing:.3px;color:var(--ink-500);
+  background:var(--surface-3);padding:10px 16px;white-space:nowrap;
+}
+.cmp td{padding:12px 16px;border-top:1px solid var(--hairline);color:var(--ink-700);vertical-align:top;line-height:1.6}
+.cmp td:first-child{color:var(--ink-900);font-weight:500;white-space:nowrap}
+
+/* ============ 响应式 ============ */
+@media(max-width:1100px){
+  .content{padding:20px 16px 48px}
+  .kv{grid-template-columns:repeat(2,1fr)}
+}
+@media(max-width:900px){
+  body{height:auto;overflow:visible}
+  .sidebar{display:none}
+  .app{flex:none;overflow:visible}
+  .main{width:100%}
+  .content{overflow:visible}
+  .topbar{padding:0 16px}
+  .topbar-desc{display:none}
+}
+@media(max-width:720px){
+  /* 窄屏：设计工具条收成序号 + 短词，避免占掉半屏（保留分组标签，否则 ①②③④ 无从解读） */
+  .s-long,.v-long{display:none}
+  .seg button{padding:5px 9px}
+  .verdict{padding:18px 16px}
+  .verdict-sentence{font-size:19px}
+  .verdict-icon{width:38px;height:38px;flex-basis:38px;font-size:19px}
+  .kv{grid-template-columns:1fr 1fr;gap:14px}
+  .kv-item .v{font-size:19px}
+  .gate{padding:11px 16px}
+  .gate-rail{left:27px}
+  .gate-meta{margin-left:0;flex-basis:100%}
+  .stage-head{padding:11px 16px}
+  .fix-key{flex-basis:100%}
+  .fix-row{flex-direction:column;gap:2px}
+  .devbar{gap:12px;padding:10px 14px}
+  .cmp{font-size:12px}
+  .cmp td,.cmp th{padding:10px 12px}
+  .old-metrics{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+
+<!-- ================= 设计演示工具条 ================= -->
+<div class="devbar">
+  <span class="devbar-tag">设计演示</span>
+  <div class="devbar-group">
+    <span class="devbar-label">视图</span>
+    <div class="seg" id="viewSeg">
+      <button data-view="new" aria-pressed="true">新版<span class="v-long"> · 今日判决页</span></button>
+      <button data-view="old" aria-pressed="false">改造前<span class="v-long"> · 现状对照</span></button>
+    </div>
+  </div>
+  <div class="devbar-group" id="sceneGroup">
+    <span class="devbar-label">判决场景</span>
+    <div class="seg" id="sceneSeg">
+      <button data-scene="1" aria-pressed="true">①<span class="s-long"> 数据源未验证</span></button>
+      <button data-scene="2" aria-pressed="false">②<span class="s-long"> 引擎离线</span></button>
+      <button data-scene="3" aria-pressed="false">③<span class="s-long"> 可出·未生成</span></button>
+      <button data-scene="4" aria-pressed="false">④<span class="s-long"> 建议已就绪</span></button>
+    </div>
+  </div>
+</div>
+
+<!-- ================= 视图 A：新版今日判决页 ================= -->
+<div class="view is-active" data-view="new">
+<div class="app">
+
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-logo">Q</div>
+      <div>
+        <div class="brand-name">知衡量化</div>
+        <div class="brand-sub">QUAP 研究平台</div>
+      </div>
+    </div>
+
+    <div class="verdict-mini err" id="verdictMini">
+      <div class="verdict-mini-k">今日判决</div>
+      <div class="verdict-mini-v"><span id="vmGlyph">✕</span><span id="vmText">受阻 · 出不了建议</span></div>
+    </div>
+
+    <div class="nav-group-title">日常</div>
+    <button class="nav-item is-active">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 7l6-4.5L14 7v6.5a1 1 0 01-1 1H3a1 1 0 01-1-1V7z"/></svg>
+      今日
+    </button>
+    <button class="nav-item">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2.5 13.5V7M6.5 13.5V3M10.5 13.5V9M14 13.5V5"/></svg>
+      我的组合
+      <span class="nav-tail"><span class="nav-badge">5</span></span>
+    </button>
+    <button class="nav-item">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="4.2"/><path d="M10.2 10.2L14 14"/></svg>
+      选股发现
+    </button>
+
+    <div class="nav-group-title">研究</div>
+    <button class="nav-item">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 12l3.5-4 3 2.5L14 4"/><path d="M10.5 4H14v3.5"/></svg>
+      个股研究
+    </button>
+    <button class="nav-item">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2.5" y="2.5" width="11" height="11" rx="2"/><path d="M5.5 6.5h5M5.5 9.5h3"/></svg>
+      模型与报告
+    </button>
+
+    <div class="nav-group-title">系统</div>
+    <button class="nav-item">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M12.6 3.4l-1.4 1.4M4.8 11.2l-1.4 1.4"/></svg>
+      运行记录与配置
+    </button>
+
+    <div class="sidebar-foot">
+      <div class="sidebar-note">
+        沪深 A 股 · <b>人工决策</b><br>
+        红涨绿跌 · 北京时间<br>
+        本平台不执行交易
+      </div>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <div class="topbar-title">今日</div>
+      <div class="topbar-desc">今天能不能出建议，以及为什么</div>
+      <div class="topbar-right">
+        <!-- 只放与判决无关的事实（连通性）。不放「系统正常」——那会和红色判决自相矛盾。 -->
+        <span class="badge idle">接口已连接</span>
+        <button class="search-trigger">搜索 <span class="kbd">⌘K</span></button>
+      </div>
+    </header>
+
+    <div class="content">
+      <div class="wrap">
+
+        <!-- ============ 场景 1：数据源未验证 ============ -->
+        <section class="scene is-active" data-scene="1">
+          <div class="verdict blocked">
+            <div class="verdict-top">
+              <div class="verdict-icon">✕</div>
+              <div class="verdict-body">
+                <div class="verdict-eyebrow">今日判决</div>
+                <div class="verdict-sentence">今天出不了建议</div>
+                <div class="verdict-reason">卡在 <b>数据源验证</b>：7 个日线接口里有 <b>2 个</b>从未成功完成一次真实采集，因此平台不承认这份数据，也就不会拿它训练或推理。</div>
+                <div class="verdict-action">
+                  <button class="btn btn-primary btn-lg">立即采集</button>
+                  <span class="verdict-note">约 3 分钟 · 采集完成后本页自动更新</span>
+                </div>
+              </div>
+            </div>
+            <div class="verdict-foot">
+              <span class="badge warn">五分钟叠加：同样受阻</span>
+              <span>不影响日线建议的解锁。日线打通后五分钟会单独提示它还缺什么。</span>
+            </div>
+          </div>
+
+          <div class="section-head">
+            <h2>解锁链路</h2>
+            <p>阶段一的三项互相独立，可能同时是卡点；阶段二起只呈现第一个卡点</p>
+          </div>
+
+          <div class="chain">
+            <div class="stage parallel">
+              <div class="stage-head"><span class="stage-name">阶段一 · 基础就绪</span><span class="stage-kind par">3 项互相独立</span><span class="badge err">1 项卡住</span></div>
+              <div class="stage-body">
+                <div class="gate is-blocked">
+                  <div class="gate-rail"></div>
+                  <div class="gate-index">1</div>
+                  <div class="gate-body">
+                    <div class="gate-line">
+                      <span class="gate-name">数据源验证</span>
+                      <span class="gate-meta">当前卡点</span>
+                    </div>
+                    <div class="gate-desc">每个接口必须成功完成一次真实采集，平台才会承认它能用。</div>
+                    <div class="fix">
+                      <div class="fix-row"><div class="fix-key">未验证</div><div class="fix-val"><span class="mono">history</span> <span class="mono">factors</span> 这 2 个接口没有一次成功的采集记录</div></div>
+                      <div class="fix-row"><div class="fix-key">已通过</div><div class="fix-val">securities、calendar、benchmark、security_history、constraints 共 5 个已验证</div></div>
+                      <div class="fix-row"><div class="fix-key">为什么</div><div class="fix-val">旧令牌供应商把这一步叫「权限」，免令牌公开源没有权限可授——缺的是一次真实采集。<b>这一步能自己解决。</b></div></div>
+                      <div class="fix-actions">
+                        <span class="tag-auto">可自解</span>
+                        <button class="btn btn-primary btn-sm">立即采集</button>
+                        <button class="btn btn-ghost btn-sm">查看接口明细</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="gate is-done">
+                  <div class="gate-rail"></div>
+                  <div class="gate-index">2</div>
+                  <div class="gate-body">
+                    <div class="gate-line"><span class="gate-name">采集范围</span><span class="gate-meta">全市场 · 覆盖 99.2%</span></div>
+                    <div class="gate-desc">配置满足生产验收要求（全市场 ≥95%）。</div>
+                  </div>
+                </div>
+                <div class="gate is-done">
+                  <div class="gate-rail"></div>
+                  <div class="gate-index">3</div>
+                  <div class="gate-body">
+                    <div class="gate-line"><span class="gate-name">Qlib 引擎</span><span class="gate-meta">3 / 3 工作进程在线</span></div>
+                    <div class="gate-desc">日线、五分钟、数据三个工作进程心跳正常。</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="stage">
+              <div class="stage-head"><span class="stage-name">阶段二 · 数据与模型</span><span class="stage-kind seq">顺序依赖</span><span class="badge idle">等待上游</span></div>
+              <div class="stage-body">
+                <div class="gate is-waiting">
+                  <div class="gate-rail"></div>
+                  <div class="gate-index">4</div>
+                  <div class="gate-body">
+                    <div class="gate-line"><span class="gate-name">数据代次</span><span class="gate-meta">等待上游</span></div>
+                    <div class="gate-desc">等待上游解除后再检查。</div>
+                  </div>
+                </div>
+                <div class="gate is-waiting">
+                  <div class="gate-rail"></div>
+                  <div class="gate-index">5</div>
+                  <div class="gate-body">
+                    <div class="gate-line"><span class="gate-name">模型发布</span><span class="gate-meta">等待上游</span></div>
+                    <div class="gate-desc">等待上游解除后再检查。</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="stage">
+              <div class="stage-head"><span class="stage-name">阶段三 · 产出</span><span class="stage-kind seq">顺序依赖</span><span class="badge idle">等待上游</span></div>
+              <div class="stage-body">
+                <div class="gate is-waiting">
+                  <div class="gate-index">6</div>
+                  <div class="gate-body">
+                    <div class="gate-line"><span class="gate-name">今日建议</span><span class="gate-meta">等待上游</span></div>
+                    <div class="gate-desc">前 5 道门禁全部通过后，这里会出现「生成今天的建议」。</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="legend">
+            <div class="legend-item"><span class="legend-swatch done">✓</span>已通过</div>
+            <div class="legend-item"><span class="legend-swatch blocked">✕</span>卡点 · 可以动手</div>
+            <div class="legend-item"><span class="legend-swatch waiting"></span>等待上游 · 不显示自身状态</div>
+            <div class="legend-item"><span class="legend-swatch pending"></span>可以执行</div>
+          </div>
+          <p class="legend-note">阶段一的三项互相独立，可能同时是卡点；阶段二起是顺序依赖，只呈现第一个卡点，其余显示「等待上游」。</p>
+
+          <details class="evidence">
+            <summary>依据与证据</summary>
+            <div class="evidence-body">
+              <table class="ev-table">
+                <thead><tr><th>项目</th><th>实测值</th><th>说明</th></tr></thead>
+                <tbody>
+                  <tr><td>数据源接口</td><td class="m">5 / 7 已验证</td><td>未验证：history、factors</td></tr>
+                  <tr><td>日线覆盖</td><td class="m">99.2%</td><td>门槛 95%</td></tr>
+                  <tr><td>引擎心跳</td><td class="m">3 / 3</td><td>20 秒窗口内</td></tr>
+                  <tr><td>上次成功建议</td><td class="m">2026-09-24 15:00</td><td>已过期，不可用于今天</td></tr>
+                  <tr><td>数据代次</td><td class="m">—</td><td>等待上游</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </details>
+        </section>
+
+        <!-- ============ 场景 2：引擎离线 ============ -->
+        <section class="scene" data-scene="2">
+          <div class="verdict blocked">
+            <div class="verdict-top">
+              <div class="verdict-icon">✕</div>
+              <div class="verdict-body">
+                <div class="verdict-eyebrow">今日判决</div>
+                <div class="verdict-sentence">今天出不了建议</div>
+                <div class="verdict-reason">卡在 <b>Qlib 引擎</b>：三个工作进程都没有心跳，训练与推理都无法执行。<b>这一步在平台里点不出来，需要有人去启动服务。</b></div>
+                <div class="verdict-action">
+                  <button class="btn btn-secondary btn-lg">我已处理，重新检测</button>
+                  <span class="verdict-note">服务起来后回到这里点一下即可</span>
+                </div>
+              </div>
+            </div>
+            <div class="verdict-foot">
+              <span class="badge warn">五分钟叠加：同样受阻</span>
+              <span>不影响日线建议的解锁。</span>
+            </div>
+          </div>
+
+          <div class="section-head">
+            <h2>解锁链路</h2>
+            <p>阶段一的三项互相独立，可能同时是卡点；阶段二起只呈现第一个卡点</p>
+          </div>
+
+          <div class="chain">
+            <div class="stage parallel">
+              <div class="stage-head"><span class="stage-name">阶段一 · 基础就绪</span><span class="stage-kind par">3 项互相独立</span><span class="badge err">1 项卡住</span></div>
+              <div class="stage-body">
+                <div class="gate is-done">
+                  <div class="gate-rail"></div>
+                  <div class="gate-index">1</div>
+                  <div class="gate-body">
+                    <div class="gate-line"><span class="gate-name">数据源验证</span><span class="gate-meta">7 / 7 已验证</span></div>
+                    <div class="gate-desc">全部接口均已完成真实采集。</div>
+                  </div>
+                </div>
+                <div class="gate is-done">
+                  <div class="gate-rail"></div>
+                  <div class="gate-index">2</div>
+                  <div class="gate-body">
+                    <div class="gate-line"><span class="gate-name">采集范围</span><span class="gate-meta">全市场 · 覆盖 99.2%</span></div>
+                    <div class="gate-desc">配置满足生产验收要求。</div>
+                  </div>
+                </div>
+                <div class="gate is-blocked">
+                  <div class="gate-rail"></div>
+                  <div class="gate-index">3</div>
+                  <div class="gate-body">
+                    <div class="gate-line"><span class="gate-name">Qlib 引擎</span><span class="gate-meta">当前卡点</span></div>
+                    <div class="gate-desc">三个工作进程都需要在线，缺一个就无法完成训练与推理。</div>
+                    <div class="fix manual">
+                      <div class="fix-row"><div class="fix-key">缺失</div><div class="fix-val"><span class="mono">qlib-daily</span> <span class="mono">qlib-intraday</span> <span class="mono">qlib-data</span> 三个必需角色的心跳均已超过 20 秒未更新</div></div>
+                      <div class="fix-row"><div class="fix-key">需要</div><div class="fix-val">在部署机上启动这四个服务（三个必需角色 + 一个诊断）。平台无法代你执行，因为它运行在另一台机器上。</div></div>
+                      <div class="fix-row"><div class="fix-key">命令</div><div class="fix-val">
+                        <code class="cmd">docker compose --profile qlib up -d qlib-data qlib-daily qlib-intraday qlib-diagnostics</code>
+                      </div></div>
+                      <div class="fix-actions">
+                        <span class="tag-manual">需人工 · 平台内不可点</span>
+                        <button class="btn btn-secondary btn-sm">我已处理，重新检测</button>
+                        <span class="fix-hint">不做「修复」按钮——点了也不会发生任何事</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="stage">
+              <div class="stage-head"><span class="stage-name">阶段二 · 数据与模型</span><span class="stage-kind seq">顺序依赖</span><span class="badge idle">等待上游</span></div>
+              <div class="stage-body">
+                <div class="gate is-waiting">
+                  <div class="gate-rail"></div>
+                  <div class="gate-index">4</div>
+                  <div class="gate-body"><div class="gate-line"><span class="gate-name">数据代次</span><span class="gate-meta">等待上游</span></div><div class="gate-desc">等待上游解除后再检查。</div></div>
+                </div>
+                <div class="gate is-waiting">
+                  <div class="gate-rail"></div>
+                  <div class="gate-index">5</div>
+                  <div class="gate-body"><div class="gate-line"><span class="gate-name">模型发布</span><span class="gate-meta">等待上游</span></div><div class="gate-desc">等待上游解除后再检查。</div></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="stage">
+              <div class="stage-head"><span class="stage-name">阶段三 · 产出</span><span class="stage-kind seq">顺序依赖</span><span class="badge idle">等待上游</span></div>
+              <div class="stage-body">
+                <div class="gate is-waiting">
+                  <div class="gate-index">6</div>
+                  <div class="gate-body"><div class="gate-line"><span class="gate-name">今日建议</span><span class="gate-meta">等待上游</span></div><div class="gate-desc">前 5 道门禁全部通过后，这里会出现「生成今天的建议」。</div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="legend">
+            <div class="legend-item"><span class="legend-swatch done">✓</span>已通过</div>
+            <div class="legend-item"><span class="legend-swatch blocked">✕</span>卡点 · 可以动手</div>
+            <div class="legend-item"><span class="legend-swatch waiting"></span>等待上游 · 不显示自身状态</div>
+            <div class="legend-item"><span class="legend-swatch pending"></span>可以执行</div>
+          </div>
+          <p class="legend-note">阶段一的三项互相独立，可能同时是卡点；阶段二起是顺序依赖，只呈现第一个卡点，其余显示「等待上游」。</p>
+
+          <details class="evidence">
+            <summary>依据与证据</summary>
+            <div class="evidence-body">
+              <table class="ev-table">
+                <thead><tr><th>项目</th><th>实测值</th><th>说明</th></tr></thead>
+                <tbody>
+                  <tr><td>引擎心跳</td><td class="m">0 / 3</td><td>20 秒窗口内无心跳</td></tr>
+                  <tr><td>数据源接口</td><td class="m">7 / 7 已验证</td><td>—</td></tr>
+                  <tr><td>日线覆盖</td><td class="m">99.2%</td><td>门槛 95%</td></tr>
+                  <tr><td>上次成功建议</td><td class="m">2026-09-24 15:00</td><td>已过期</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </details>
+        </section>
+
+        <!-- ============ 场景 3：可以出，还没生成 ============ -->
+        <section class="scene" data-scene="3">
+          <div class="verdict ready">
+            <div class="verdict-top">
+              <div class="verdict-icon">✓</div>
+              <div class="verdict-body">
+                <div class="verdict-eyebrow">今日判决</div>
+                <div class="verdict-sentence">今天可以出建议</div>
+                <div class="verdict-reason">六道门禁全部通过，但今天的建议<b>还没有生成</b>。生成后你会看到目标权重与调整幅度。</div>
+                <div class="verdict-action">
+                  <button class="btn btn-primary btn-lg">生成今天的建议</button>
+                  <span class="verdict-note">约 40 秒 · 使用模型 v2026.09.21</span>
+                </div>
+              </div>
+            </div>
+            <div class="verdict-foot">
+              <span class="badge ok">日线就绪</span>
+              <span class="badge ok">五分钟就绪</span>
+              <span>上次成功建议：2026-09-24 15:00</span>
+            </div>
+          </div>
+
+          <div class="section-head">
+            <h2>解锁链路</h2>
+            <p>全部通过，只差最后一步生成</p>
+          </div>
+
+          <div class="chain">
+            <div class="stage parallel">
+              <div class="stage-head"><span class="stage-name">阶段一 · 基础就绪</span><span class="stage-kind par">3 项互相独立</span><span class="badge ok">已通过</span></div>
+              <div class="stage-body">
+                <div class="gate is-done">
+                  <div class="gate-rail"></div><div class="gate-index">1</div>
+                  <div class="gate-body"><div class="gate-line"><span class="gate-name">数据源验证</span><span class="gate-meta">7 / 7 已验证</span></div><div class="gate-desc">全部接口均已完成真实采集。</div></div>
+                </div>
+                <div class="gate is-done">
+                  <div class="gate-rail"></div><div class="gate-index">2</div>
+                  <div class="gate-body"><div class="gate-line"><span class="gate-name">采集范围</span><span class="gate-meta">全市场 · 覆盖 99.2%</span></div><div class="gate-desc">配置满足生产验收要求。</div></div>
+                </div>
+                <div class="gate is-done">
+                  <div class="gate-rail"></div><div class="gate-index">3</div>
+                  <div class="gate-body"><div class="gate-line"><span class="gate-name">Qlib 引擎</span><span class="gate-meta">3 / 3 在线</span></div><div class="gate-desc">日线、五分钟、数据三个工作进程心跳正常。</div></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="stage">
+              <div class="stage-head"><span class="stage-name">阶段二 · 数据与模型</span><span class="stage-kind seq">顺序依赖</span><span class="badge ok">已通过</span></div>
+              <div class="stage-body">
+                <div class="gate is-done">
+                  <div class="gate-rail"></div><div class="gate-index">4</div>
+                  <div class="gate-body"><div class="gate-line"><span class="gate-name">数据代次</span><span class="gate-meta">gen-20260925-a17</span></div><div class="gate-desc">今日 09:12 导出并通过验证，不可变。</div></div>
+                </div>
+                <div class="gate is-done">
+                  <div class="gate-rail"></div><div class="gate-index">5</div>
+                  <div class="gate-body"><div class="gate-line"><span class="gate-name">模型发布</span><span class="gate-meta">v2026.09.21 · 10-20 到期</span></div><div class="gate-desc">评估通过、已批准、未过期。距今 23 天到期。</div></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="stage">
+              <div class="stage-head"><span class="stage-name">阶段三 · 产出</span><span class="stage-kind seq">顺序依赖</span><span class="badge warn">待生成</span></div>
+              <div class="stage-body">
+                <div class="gate is-pending">
+                  <div class="gate-index">6</div>
+                  <div class="gate-body">
+                    <div class="gate-line"><span class="gate-name">今日建议</span><span class="gate-meta">可以生成</span></div>
+                    <div class="gate-desc">前置条件已全部满足，可以请求生成今天的建议。</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="legend">
+            <div class="legend-item"><span class="legend-swatch done">✓</span>已通过</div>
+            <div class="legend-item"><span class="legend-swatch blocked">✕</span>卡点 · 可以动手</div>
+            <div class="legend-item"><span class="legend-swatch waiting"></span>等待上游 · 不显示自身状态</div>
+            <div class="legend-item"><span class="legend-swatch pending"></span>可以执行</div>
+          </div>
+          <p class="legend-note">阶段一的三项互相独立，可能同时是卡点；阶段二起是顺序依赖，只呈现第一个卡点，其余显示「等待上游」。</p>
+
+          <details class="evidence">
+            <summary>依据与证据</summary>
+            <div class="evidence-body">
+              <table class="ev-table">
+                <thead><tr><th>项目</th><th>实测值</th><th>说明</th></tr></thead>
+                <tbody>
+                  <tr><td>数据代次</td><td class="m">gen-20260925-a17</td><td>今日 09:12 导出</td></tr>
+                  <tr><td>模型版本</td><td class="m">v2026.09.21</td><td>2026-10-20 到期 · 评估通过</td></tr>
+                  <tr><td>策略版本</td><td class="m">rev 4</td><td>与当前一致</td></tr>
+                  <tr><td>引擎版本</td><td class="m">qlib-0.9.7</td><td>—</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </details>
+        </section>
+
+        <!-- ============ 场景 4：建议已就绪 ============ -->
+        <section class="scene" data-scene="4">
+          <div class="verdict ready">
+            <div class="verdict-top">
+              <div class="verdict-icon">✓</div>
+              <div class="verdict-body">
+                <div class="verdict-eyebrow">今日判决</div>
+                <div class="verdict-sentence">今天的建议已就绪</div>
+                <div class="verdict-reason">基于 2026-09-25 收盘数据生成，<b>采纳截止 今日 15:00</b>。过期后需要重新生成一份。</div>
+                <div class="verdict-action">
+                  <button class="btn btn-primary btn-lg">去我的组合采纳</button>
+                  <button class="btn btn-secondary btn-lg">查看溯源</button>
+                  <span class="verdict-note">不采纳也无需操作，系统不会自动执行任何委托</span>
+                </div>
+              </div>
+            </div>
+            <div class="verdict-foot">
+              <span class="badge ok">日线已就绪</span>
+              <span class="badge ok">五分钟已就绪</span>
+              <span>生成于 2026-09-25 15:02 · 模型 v2026.09.21</span>
+            </div>
+          </div>
+
+          <div class="suggest">
+            <div class="suggest-head">
+              <h3>今天的建议</h3>
+              <span class="badge ok">有效</span>
+            </div>
+            <div class="suggest-body">
+              <div class="kv">
+                <div class="kv-item"><div class="k">建议现金比例</div><div class="v num">8.00<small>%</small></div></div>
+                <div class="kv-item"><div class="k">调整项</div><div class="v num">5<small>只</small></div></div>
+                <div class="kv-item"><div class="k">采纳截止</div><div class="v num">15:00</div></div>
+                <div class="kv-item"><div class="k">特征截止</div><div class="v num">09-25<small>收盘</small></div></div>
+              </div>
+              <div class="tbl-wrap">
+                <table class="tbl">
+                  <thead><tr>
+                    <th>股票代码</th><th>名称</th><th class="r">当前权重</th><th class="r">建议权重</th><th class="r">调整</th><th>建议</th>
+                  </tr></thead>
+                  <tbody>
+                    <tr><td class="mono">600519</td><td>贵州茅台</td><td class="r">12.00%</td><td class="r strong">14.50%</td><td class="r up">+2.50%</td><td><span class="tag tag-up">建议加仓</span></td></tr>
+                    <tr><td class="mono">300750</td><td>宁德时代</td><td class="r">10.00%</td><td class="r strong">12.00%</td><td class="r up">+2.00%</td><td><span class="tag tag-up">建议加仓</span></td></tr>
+                    <tr><td class="mono">000858</td><td>五粮液</td><td class="r">8.00%</td><td class="r strong">6.50%</td><td class="r down">-1.50%</td><td><span class="tag tag-down">建议减仓</span></td></tr>
+                    <tr><td class="mono">601318</td><td>中国平安</td><td class="r">7.00%</td><td class="r strong">5.50%</td><td class="r down">-1.50%</td><td><span class="tag tag-down">建议减仓</span></td></tr>
+                    <tr><td class="mono">688981</td><td>中芯国际</td><td class="r">5.00%</td><td class="r">5.00%</td><td class="r flat">0.00%</td><td><span class="tag">维持</span></td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <div style="font-size:12px;color:var(--ink-500);margin-top:12px;line-height:1.7">
+                未列出的持仓保持当前权重不变，剩余部分留作现金。采纳只会生成一个新的组合版本，<b style="color:var(--ink-700)">不会发出任何委托</b>。
+              </div>
+            </div>
+          </div>
+
+          <details class="evidence" open>
+            <summary>解锁链路（6 / 6 已通过）</summary>
+            <div class="evidence-body">
+              <table class="ev-table">
+                <thead><tr><th>门禁</th><th>状态</th><th>证据</th></tr></thead>
+                <tbody>
+                  <tr><td>① 数据源验证</td><td><span class="badge ok">通过</span></td><td class="m">7 / 7 已验证</td></tr>
+                  <tr><td>② 采集范围</td><td><span class="badge ok">通过</span></td><td class="m">全市场 · 99.2%</td></tr>
+                  <tr><td>③ Qlib 引擎</td><td><span class="badge ok">通过</span></td><td class="m">3 / 3 在线</td></tr>
+                  <tr><td>④ 数据代次</td><td><span class="badge ok">通过</span></td><td class="m">gen-20260925-a17</td></tr>
+                  <tr><td>⑤ 模型发布</td><td><span class="badge ok">通过</span></td><td class="m">v2026.09.21 · 10-20 到期</td></tr>
+                  <tr><td>⑥ 今日建议</td><td><span class="badge ok">通过</span></td><td class="m">报告 1042 · 09-25 15:02</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </details>
+        </section>
+
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- ================= 视图 B：改造前对照 ================= -->
+<div class="view" data-view="old">
+<div class="app">
+
+  <aside class="sidebar old-sidebar">
+    <div class="brand">
+      <div class="brand-logo">Q</div>
+      <div>
+        <div class="brand-name">知衡量化</div>
+        <div class="brand-sub">QUAP RESEARCH PLATFORM</div>
+      </div>
+    </div>
+    <div class="nav-group-title">&nbsp;</div>
+    <button class="nav-item is-active">Overview</button>
+    <button class="nav-item">My Model Portfolio</button>
+    <button class="nav-item">Stock Research</button>
+    <button class="nav-item">Qlib Report</button>
+    <button class="nav-item">Low-Price Scan</button>
+    <button class="nav-item">Models &amp; Validation</button>
+    <button class="nav-item">Data &amp; Pipeline</button>
+    <div class="sidebar-foot">
+      <div class="sidebar-note">沪深 A 股 · <b>人工决策</b><br>红涨绿跌 · 北京时间<br>本平台不执行交易</div>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <div class="topbar-title">Overview</div>
+      <div class="topbar-desc">Are daily and five-minute recommendations ready?</div>
+      <div class="topbar-right"><span class="badge ok">API connected</span></div>
+    </header>
+
+    <div class="content">
+      <div class="wrap">
+
+        <div class="old-note">
+          <h3>这一屏就是问题的现场</h3>
+          <p><b>3 条警告里有 2 条是第 1 条的必然后果。</b>没有模型、没有数据代次，都是「数据源没验证」的下游结果——它们不是三个问题，是一个问题被摊成了三行。</p>
+          <p>操作员按顺序修完第 1 条、回到这一屏，<b>仍然看到 Blocked</b>（因为第 2、3 条还在），于是以为没修好，再去别的空间翻。这就是「三个空间一次往返」的机制。</p>
+        </div>
+
+        <div class="old-metrics">
+          <div class="old-metric"><div class="k">Daily</div><div class="v">Blocked</div></div>
+          <div class="old-metric"><div class="k">Five-minute</div><div class="v">Blocked</div></div>
+        </div>
+
+        <div class="old-warn"><span class="old-warn-tag">根因</span>unverified capabilities: history, factors</div>
+        <div class="old-warn downstream"><span class="old-warn-tag">后果</span>no approved, qualified, unexpired Qlib model</div>
+        <div class="old-warn downstream"><span class="old-warn-tag">后果</span>no validated Qlib generation</div>
+
+        <div class="old-caption">Daily &nbsp;·&nbsp; Release v2026.09.21 · expires 2026-10-20</div>
+        <div class="old-caption">Qlib is required. Missing prerequisites never produce substitute recommendations.</div>
+
+        <div class="old-btns">
+          <button class="btn btn-secondary">Collection controls</button>
+          <button class="btn btn-secondary">Update source data</button>
+          <button class="btn btn-secondary">Check provider capabilities</button>
+        </div>
+
+        <div class="section-head" style="margin-top:32px">
+          <h2>要回答「今天能不能出建议」，操作员实际走的路径</h2>
+        </div>
+        <div class="route">
+          <span class="route-step hop">Overview · 看到 Blocked</span>
+          <span class="route-arrow">→</span>
+          <span class="route-step">Data &amp; Pipeline · 找原因</span>
+          <span class="route-arrow">→</span>
+          <span class="route-step">Models &amp; Validation · 训练</span>
+          <span class="route-arrow">→</span>
+          <span class="route-step hop">Overview · 回来看结果</span>
+        </div>
+        <div class="route-loop">三个空间、一次往返。而且回来后大概率还是 Blocked——因为下游的警告没有区分「真问题」和「上游的后果」。</div>
+
+        <div class="section-head" style="margin-top:32px">
+          <h2>同一份数据，两种呈现</h2>
+        </div>
+        <table class="cmp">
+          <thead><tr><th>维度</th><th>改造前</th><th>改造后</th></tr></thead>
+          <tbody>
+            <tr><td>一级导航</td><td>7 个模块名（Overview / Data &amp; Pipeline / Models &amp; Validation…），按系统内部结构划分</td><td>按操作员的决策组织；「今日」一个入口回答核心问题，判决状态点在侧边栏常驻</td></tr>
+            <tr><td>回答「能不能出建议」</td><td>横跨 3 个空间、一次往返</td><td>0 次跳转，一屏给出判决</td></tr>
+            <tr><td>卡点的呈现</td><td>3–5 条警告平铺，不区分根因与后果</td><td>还原为依赖链，并标注每段的依赖关系：阶段一三项<b>互相独立</b>（可能同时是卡点），阶段二起是<b>顺序依赖</b>，只呈现第一个</td></tr>
+            <tr><td>下游状态</td><td>照实显示失败 → 与上游卡点混在一起</td><td>统一显示「等待上游」，不暴露自身状态</td></tr>
+            <tr><td>解锁动作</td><td>散落在 Data &amp; Pipeline 的操作区</td><td>就地展开在卡点下方</td></tr>
+            <tr><td>不能自解的情况</td><td>给一个「Update source data」按钮，点了对引擎离线毫无作用</td><td>区分「可自解」与「需人工」；后者不给假按钮，给指令 + 「我已处理，重新检测」</td></tr>
+            <tr><td>修完之后的反馈</td><td>提示「Follow progress in Data &amp; Pipeline」——把你送走</td><td>本页原地刷新判决，不需要刷新浏览器</td></tr>
+          </tbody>
+        </table>
+
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var $ = function(s){ return document.querySelector(s); };
+  var $$ = function(s){ return Array.prototype.slice.call(document.querySelectorAll(s)); };
+
+  /* 视图切换 */
+  var viewSeg = $("#viewSeg"), sceneGroup = $("#sceneGroup");
+  $$("#viewSeg button").forEach(function(b){
+    b.addEventListener("click", function(){
+      $$("#viewSeg button").forEach(function(x){ x.setAttribute("aria-pressed", "false"); });
+      b.setAttribute("aria-pressed", "true");
+      var v = b.getAttribute("data-view");
+      $$(".view").forEach(function(el){ el.classList.toggle("is-active", el.getAttribute("data-view") === v); });
+      sceneGroup.style.display = (v === "new") ? "" : "none";
+      document.querySelector(".content") && window.scrollTo(0, 0);
+    });
+  });
+
+  /* 场景切换 */
+  var mini = $("#verdictMini"), vmGlyph = $("#vmGlyph"), vmText = $("#vmText");
+  var MINI = {
+    "1": ["err", "✕", "受阻 · 出不了建议"],
+    "2": ["err", "✕", "受阻 · 出不了建议"],
+    "3": ["ok", "✓", "就绪 · 待生成"],
+    "4": ["ok", "✓", "就绪 · 建议已出"]
+  };
+  $$("#sceneSeg button").forEach(function(b){
+    b.addEventListener("click", function(){
+      $$("#sceneSeg button").forEach(function(x){ x.setAttribute("aria-pressed", "false"); });
+      b.setAttribute("aria-pressed", "true");
+      var s = b.getAttribute("data-scene");
+      $$(".scene").forEach(function(el){ el.classList.toggle("is-active", el.getAttribute("data-scene") === s); });
+      if (mini) {
+        var m = MINI[s] || MINI["1"];
+        mini.className = "verdict-mini " + m[0];
+        vmGlyph.textContent = m[1];
+        vmText.textContent = m[2];
+      }
+    });
+  });
+})();
+</script>
+</body>
+</html>

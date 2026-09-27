@@ -1,0 +1,1658 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>QUAP 知衡量化 · UI 组件库</title>
+<style>
+/* ============================================================
+   QUAP 设计令牌 — 唯一权威定义
+   所有数值均通过 WCAG 2.1 AA 校验（见第 7 章审计表）
+   ============================================================ */
+:root{
+  /* 品牌 — 单一强调色，稀缺使用 */
+  --brand-700:#1d3f7d; --brand-600:#2a55c8; --brand-500:#3567d6; --brand-400:#6b93e6;
+  --brand-200:#c7d8f7; --brand-100:#e4ecfc; --brand-50:#f2f6fd;
+  /* 深色面 */
+  --navy-950:#0c182e; --navy-900:#122340; --navy-800:#1a3055; --navy-700:#24406e;
+  --nav-100:#a8bcd9; --nav-200:#dce6f5; --nav-300:#7b8fb3;
+  /* 深色面状态点/状态文字 — 只允许出现在 navy-* 底上（侧边栏判决标记） */
+  --nav-ok:#5cc79a; --nav-err:#f0848c;
+  --on-brand:#ffffff;
+  /* 文字 — 三级文字灰 + 一级非文字色 */
+  --ink-900:#0e1c33; --ink-700:#2b3c57; --ink-500:#5b6c86; --ink-200:#aab6c8;
+  /* 表面 */
+  --canvas:#f5f7fb; --surface-1:#ffffff; --surface-2:#fbfcfe; --surface-3:#eef2f8;
+  --hairline:#e3e9f3; --hairline-strong:#cfd8e6;
+  /* 行情 — 红涨绿跌，不可反转 */
+  --quote-up:#d32935; --quote-up-bg:#fdeef0;
+  --quote-down:#0c8050; --quote-down-bg:#e8f7f0;
+  --quote-flat:#5b6c86;
+  /* 状态语义 — 与行情色严格分离 */
+  --state-ok:#117e56; --state-ok-bg:#e6f5ee;
+  --state-warn:#a36100; --state-warn-bg:#fff4e0;
+  --state-error:#c8303c; --state-error-bg:#fdecee;
+  --state-info:#2a55c8; --state-info-bg:#e8effc;
+  --state-busy:#6a5ad2; --state-busy-bg:#efecfc;
+  --state-idle:#5e6f88; --state-idle-bg:#eef1f6;
+  /* 语义面板描边 — tinted 面板（横幅、判决条、卡点块）的 1px 边，是 *-bg 的同色相压深 */
+  --state-ok-line:#bfe4d4;
+  --state-info-line:#c9daf5;
+  --state-warn-line:#f0dcb4;
+  --state-error-line:#f2c9cd;
+  /* 字体 */
+  --font-sans:"Inter",-apple-system,BlinkMacSystemFont,"PingFang SC","HarmonyOS Sans SC","Microsoft YaHei","Source Han Sans SC",system-ui,sans-serif;
+  --font-num:"JetBrains Mono","SF Mono",ui-monospace,Menlo,Consolas,monospace;
+  /* 阴影 — 海军蓝着色，非纯黑 */
+  --shadow-xs:0 1px 2px rgba(16,39,77,.06);
+  --shadow-sm:0 1px 3px rgba(16,39,77,.07),0 1px 2px rgba(16,39,77,.04);
+  --shadow-md:0 4px 12px rgba(16,39,77,.08),0 1px 3px rgba(16,39,77,.05);
+  --shadow-lg:0 12px 32px rgba(16,39,77,.10),0 2px 8px rgba(16,39,77,.06);
+  --shadow-xl:0 24px 64px rgba(16,39,77,.14),0 4px 16px rgba(16,39,77,.07);
+  --shadow-focus:0 0 0 3px rgba(53,103,214,.22);
+  /* 动效 */
+  --ease-out:cubic-bezier(.32,.72,0,1);
+  --ease-inout:cubic-bezier(.4,0,.2,1);
+  --dur-fast:120ms; --dur-base:180ms; --dur-slow:240ms;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth;scroll-padding-top:76px}
+body{
+  font-family:var(--font-sans);font-size:14px;line-height:1.6;color:var(--ink-700);
+  background:var(--canvas);-webkit-font-smoothing:antialiased;font-feature-settings:"ss01";
+}
+.num,.mono{font-variant-numeric:tabular-nums}
+.mono{font-family:var(--font-num)}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-thumb{background:var(--hairline-strong);border-radius:6px;border:3px solid transparent;background-clip:content-box}
+
+/* ============ 顶栏 ============ */
+.kitbar{
+  position:sticky;top:0;z-index:100;height:56px;background:var(--surface-1);
+  border-bottom:1px solid var(--hairline);display:flex;align-items:center;gap:14px;padding:0 24px;
+}
+.kitbar-logo{
+  width:28px;height:28px;border-radius:8px;background:var(--brand-500);color:#fff;
+  display:grid;place-items:center;font-weight:800;font-size:15px;flex:0 0 28px;
+}
+.kitbar-title{font-size:14px;font-weight:600;color:var(--ink-900);white-space:nowrap}
+.kitbar-sub{font-size:12px;color:var(--ink-500);padding-left:12px;border-left:1px solid var(--hairline);white-space:nowrap}
+.kitbar-right{margin-left:auto;display:flex;align-items:center;gap:8px}
+.toggle{
+  display:inline-flex;align-items:center;gap:7px;height:32px;padding:0 12px;border-radius:8px;
+  border:1px solid var(--hairline-strong);background:var(--surface-1);color:var(--ink-700);
+  font-size:13px;font-weight:500;cursor:pointer;transition:all var(--dur-fast);white-space:nowrap;
+}
+.toggle .t-short{display:none}
+.toggle:hover{border-color:var(--brand-400);color:var(--brand-600)}
+.toggle[aria-pressed="true"]{background:var(--brand-500);border-color:var(--brand-500);color:#fff}
+.toggle-dot{width:7px;height:7px;border-radius:50%;background:currentColor;opacity:.55}
+.toggle[aria-pressed="true"] .toggle-dot{opacity:1}
+
+/* ============ 布局 ============ */
+.shell{display:flex;gap:0;max-width:1560px;margin:0 auto;padding:0 24px}
+.toc{
+  width:216px;flex:0 0 216px;padding:24px 16px 60px 0;position:sticky;top:56px;
+  height:calc(100vh - 56px);overflow-y:auto;
+}
+.toc-group{font-size:11px;font-weight:500;letter-spacing:.3px;color:var(--ink-500);padding:14px 10px 5px}
+.toc a{
+  display:block;padding:5px 10px;border-radius:6px;color:var(--ink-700);text-decoration:none;
+  font-size:13px;transition:background var(--dur-fast),color var(--dur-fast);
+}
+.toc a:hover{background:var(--surface-3);color:var(--ink-900)}
+.toc a.is-cur{background:var(--brand-50);color:var(--brand-600);font-weight:500}
+.doc{flex:1;min-width:0;padding:24px 0 120px;max-width:1080px}
+
+/* ============ 文档排版 ============ */
+.sec{margin-bottom:56px;scroll-margin-top:76px}
+.sec-head{margin-bottom:20px;padding-bottom:14px;border-bottom:1px solid var(--hairline)}
+.sec-num{
+  font-family:var(--font-num);font-size:11px;font-weight:500;letter-spacing:.4px;
+  color:var(--brand-600);background:var(--brand-100);padding:3px 8px;border-radius:4px;display:inline-block;
+}
+.sec-head h1{font-size:24px;font-weight:700;letter-spacing:-.4px;color:var(--ink-900);margin-top:10px}
+.sec-head p{font-size:13px;color:var(--ink-500);margin-top:6px;max-width:760px}
+h2.blk{font-size:16px;font-weight:600;color:var(--ink-900);margin:28px 0 12px;letter-spacing:-.1px}
+h2.blk:first-child{margin-top:0}
+.note{font-size:12px;color:var(--ink-500);line-height:1.7;margin-top:10px}
+
+/* ============ 通用容器 ============ */
+.card{background:var(--surface-1);border:1px solid var(--hairline);border-radius:12px;padding:20px}
+.card-inset{background:var(--surface-2);border-radius:8px;padding:16px}
+.grid{display:grid;gap:16px}
+/* 网格项默认 min-width:auto 会被内容撑破，必须归零才能让内部滚动容器生效 */
+.grid>*{min-width:0}
+.g2{grid-template-columns:repeat(2,1fr)}
+.g3{grid-template-columns:repeat(3,1fr)}
+.g4{grid-template-columns:repeat(4,1fr)}
+
+/* ============ 规格标注 ============ */
+.spec{display:none}
+body.show-spec .spec{display:inline-block}
+.spec{
+  font-family:var(--font-num);font-size:10px;font-weight:500;line-height:1.4;
+  background:#fff3d6;color:#7a5200;border:1px solid #e8cf9a;border-radius:3px;
+  padding:1px 5px;margin-left:6px;vertical-align:middle;white-space:nowrap;
+}
+.spec-row{
+  display:none;font-family:var(--font-num);font-size:11px;color:#7a5200;background:#fffaf0;
+  border-left:2px solid #e8cf9a;padding:5px 10px;margin-top:8px;border-radius:0 4px 4px 0;
+}
+body.show-spec .spec-row{display:block}
+
+/* ============ 组件展示台 ============ */
+.comp{background:var(--surface-1);border:1px solid var(--hairline);border-radius:12px;margin-bottom:16px;overflow:hidden}
+.comp-head{padding:16px 20px;border-bottom:1px solid var(--hairline);display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.comp-head h3{font-size:15px;font-weight:600;color:var(--ink-900)}
+.comp-head code{font-family:var(--font-num);font-size:11px;color:var(--ink-500);background:var(--surface-3);padding:2px 7px;border-radius:4px}
+.comp-head p{font-size:12px;color:var(--ink-500);flex-basis:100%;margin-top:4px}
+.comp-body{padding:0}
+.state-row{display:flex;align-items:flex-start;gap:16px;padding:14px 20px;border-bottom:1px solid var(--hairline)}
+.state-row:last-child{border-bottom:0}
+.state-label{
+  flex:0 0 76px;font-size:11px;font-weight:500;letter-spacing:.3px;color:var(--ink-500);
+  padding-top:9px;text-transform:uppercase;
+}
+.state-demo{display:flex;flex-wrap:wrap;align-items:center;gap:10px;flex:1;min-width:0}
+.comp-foot{padding:14px 20px;background:var(--surface-2);border-top:1px solid var(--hairline);overflow-x:auto}
+.comp-foot table{width:100%;border-collapse:collapse;font-size:12px;min-width:100%}
+.comp-foot th{
+  text-align:left;font-size:10px;font-weight:500;letter-spacing:.3px;color:var(--ink-500);
+  padding:0 12px 6px 0;border-bottom:1px solid var(--hairline);
+}
+.comp-foot td{padding:7px 12px 7px 0;border-bottom:1px solid var(--hairline);color:var(--ink-700);vertical-align:top}
+.comp-foot tr:last-child td{border-bottom:0}
+.comp-foot td.m{font-family:var(--font-num);font-variant-numeric:tabular-nums;white-space:nowrap}
+/* 首列是属性名，禁止逐字折行；窄视口下由 .comp-foot 横向滚动承担 */
+.comp-foot th:first-child,.comp-foot td:first-child{white-space:nowrap}
+
+/* ============ 按钮 ============ */
+.btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:6px;height:36px;padding:0 16px;
+  border-radius:8px;font-size:14px;font-weight:500;cursor:pointer;border:1px solid transparent;
+  transition:background var(--dur-fast) var(--ease-inout),border-color var(--dur-fast),color var(--dur-fast);
+  white-space:nowrap;line-height:1;font-family:var(--font-sans);
+}
+.btn:focus-visible{outline:none;box-shadow:var(--shadow-focus)}
+.btn-primary{background:var(--brand-500);color:#fff}
+.btn-primary:hover{background:var(--brand-600)}
+.btn-primary:active{background:var(--brand-700)}
+.btn-secondary{background:var(--surface-1);color:var(--ink-900);border-color:var(--hairline-strong)}
+.btn-secondary:hover{background:var(--surface-2);border-color:var(--brand-400);color:var(--brand-600)}
+.btn-secondary:active{background:var(--surface-3)}
+.btn-ghost{background:transparent;color:var(--ink-700);height:32px;padding:0 10px}
+.btn-ghost:hover{background:var(--surface-3);color:var(--ink-900)}
+.btn-danger{background:var(--surface-1);color:var(--state-error);border-color:#f0c4c8}
+.btn-danger:hover{background:var(--state-error-bg);border-color:var(--state-error)}
+.btn-on-dark{background:rgba(255,255,255,.14);color:#fff;border-color:rgba(255,255,255,.22)}
+.btn-on-dark:hover{background:rgba(255,255,255,.24)}
+.btn-solid-white{background:#fff;color:var(--navy-900);font-weight:600}
+.btn-solid-white:hover{background:#eef3fd}
+.btn-sm{height:30px;padding:0 12px;font-size:13px}
+.btn-lg{height:44px;padding:0 20px;font-size:15px}
+.btn-icon{width:36px;padding:0}
+.btn:disabled,.btn.is-disabled{background:var(--surface-3);color:var(--ink-200);border-color:transparent;cursor:not-allowed}
+.btn.is-loading{position:relative;color:transparent!important;pointer-events:none}
+.btn.is-loading::after{
+  content:"";position:absolute;width:14px;height:14px;border-radius:50%;
+  border:2px solid currentColor;border-top-color:transparent;color:#fff;animation:spin .7s linear infinite;
+}
+.btn-secondary.is-loading::after,.btn-ghost.is-loading::after{color:var(--ink-500)}
+@keyframes spin{to{transform:rotate(360deg)}}
+/* 强制状态（文档演示用，模拟伪类） */
+.f-hover.btn-primary{background:var(--brand-600)}
+.f-hover.btn-secondary{background:var(--surface-2);border-color:var(--brand-400);color:var(--brand-600)}
+.f-hover.btn-ghost{background:var(--surface-3);color:var(--ink-900)}
+.f-hover.btn-danger{background:var(--state-error-bg);border-color:var(--state-error)}
+.f-active.btn-primary{background:var(--brand-700)}
+.f-active.btn-secondary{background:var(--surface-3)}
+.f-focus{box-shadow:var(--shadow-focus);outline:none}
+
+/* ============ 徽标与标签 ============ */
+.badge{
+  display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:999px;
+  font-size:11px;font-weight:500;letter-spacing:.2px;white-space:nowrap;
+}
+.badge::before{content:"";width:5px;height:5px;border-radius:50%;background:currentColor;flex:0 0 5px}
+.badge.ok{background:var(--state-ok-bg);color:var(--state-ok)}
+.badge.warn{background:var(--state-warn-bg);color:var(--state-warn)}
+.badge.err{background:var(--state-error-bg);color:var(--state-error)}
+.badge.info{background:var(--state-info-bg);color:var(--state-info)}
+.badge.busy{background:var(--state-busy-bg);color:var(--state-busy)}
+.badge.idle{background:var(--state-idle-bg);color:var(--state-idle)}
+.badge.plain{background:var(--surface-3);color:var(--ink-500)}
+.badge.plain::before{display:none}
+.badge.lg{font-size:12px;padding:5px 12px}
+.badge.sm{font-size:10px;padding:2px 8px}
+.badge.sm::before{width:4px;height:4px;flex:0 0 4px}
+.tag{
+  display:inline-block;padding:2px 8px;border-radius:4px;background:var(--surface-3);
+  color:var(--ink-500);font-size:11px;font-weight:500;white-space:nowrap;
+}
+.tag-brand{background:var(--brand-100);color:var(--brand-700)}
+.tag-up{background:var(--quote-up-bg);color:var(--quote-up)}
+.tag-down{background:var(--quote-down-bg);color:var(--quote-down)}
+
+/* ============ 表单 ============ */
+.field{margin-bottom:16px}
+.field:last-child{margin-bottom:0}
+.field-label{display:flex;align-items:center;gap:4px;font-size:13px;font-weight:500;color:var(--ink-700);margin-bottom:6px}
+.field-req{color:var(--state-error);font-weight:600}
+.field-note{font-size:12px;color:var(--ink-500);margin-top:5px;line-height:1.5}
+.field-err{font-size:12px;color:var(--state-error);margin-top:5px;line-height:1.5;display:flex;align-items:center;gap:5px}
+.input{
+  width:100%;height:36px;padding:0 12px;border:1px solid var(--hairline-strong);border-radius:8px;
+  background:var(--surface-1);color:var(--ink-900);font-size:14px;font-family:var(--font-sans);
+  transition:border-color var(--dur-fast),box-shadow var(--dur-fast);
+}
+textarea.input{height:auto;padding:9px 12px;line-height:1.6;resize:vertical;min-height:76px}
+select.input{cursor:pointer;appearance:none;
+  background-image:url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 4.5L6 8l3.5-3.5' fill='none' stroke='%235b6c86' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 11px center;padding-right:32px;}
+.input::placeholder{color:var(--ink-500)}
+.input:hover{border-color:var(--ink-200)}
+.input:focus{outline:none;border-color:var(--brand-500);box-shadow:var(--shadow-focus)}
+.input:disabled{background:var(--surface-3);color:var(--ink-200);cursor:not-allowed;border-color:var(--hairline)}
+.input.is-error{border-color:var(--state-error)}
+.input.is-error:focus{box-shadow:0 0 0 3px rgba(200,48,60,.18)}
+.input.is-ok{border-color:var(--state-ok)}
+.f-focus.input{border-color:var(--brand-500);box-shadow:var(--shadow-focus)}
+.f-focus.input.is-error{border-color:var(--state-error);box-shadow:0 0 0 3px rgba(200,48,60,.18)}
+.input-wrap{position:relative}
+.input-wrap .input{padding-right:34px}
+.input-affix{
+  position:absolute;right:11px;top:50%;transform:translateY(-50%);font-size:12px;
+  color:var(--ink-500);pointer-events:none;
+}
+.check{display:inline-flex;align-items:flex-start;gap:9px;font-size:13px;color:var(--ink-700);cursor:pointer;line-height:1.55}
+.check input{margin-top:3px;accent-color:var(--brand-500);width:15px;height:15px;flex:0 0 15px}
+.check.is-disabled{color:var(--ink-200);cursor:not-allowed}
+.switch{display:inline-flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;color:var(--ink-700)}
+.switch-track{
+  width:38px;height:22px;border-radius:999px;background:var(--ink-200);position:relative;
+  transition:background var(--dur-base) var(--ease-inout);flex:0 0 38px;
+}
+.switch-track::after{
+  content:"";position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;
+  background:#fff;box-shadow:var(--shadow-xs);transition:transform var(--dur-base) var(--ease-out);
+}
+.switch.is-on .switch-track{background:var(--brand-500)}
+.switch.is-on .switch-track::after{transform:translateX(16px)}
+.switch.is-disabled{opacity:.45;cursor:not-allowed}
+
+/* ============ 表格 ============ */
+.tbl-wrap{overflow-x:auto;border:1px solid var(--hairline);border-radius:12px;background:var(--surface-1)}
+/* 置于 .card 内部时去掉重复的边框与底色，只保留横向滚动 */
+.tbl-wrap.plain{border:0;border-radius:0;background:transparent}
+table.tbl{width:100%;border-collapse:separate;border-spacing:0;font-size:13px}
+.tbl thead th{
+  background:var(--surface-3);color:var(--ink-500);font-size:11px;font-weight:500;letter-spacing:.3px;
+  height:36px;padding:0 12px;text-align:left;white-space:nowrap;position:sticky;top:0;
+}
+.tbl thead th:first-child{border-radius:8px 0 0 8px}
+.tbl thead th:last-child{border-radius:0 8px 8px 0}
+.tbl thead th.sortable{cursor:pointer;user-select:none}
+.tbl thead th.sortable:hover{color:var(--ink-900)}
+.tbl thead th .sort{opacity:.4;margin-left:4px;font-size:9px}
+.tbl thead th.sorted{color:var(--brand-600)}
+.tbl thead th.sorted .sort{opacity:1}
+.tbl tbody td{
+  height:40px;padding:0 12px;color:var(--ink-700);border-bottom:1px solid var(--hairline);
+  font-variant-numeric:tabular-nums;white-space:nowrap;
+}
+.tbl tbody tr:last-child td{border-bottom:0}
+.tbl tbody tr:hover td{background:var(--brand-50)}
+.tbl tbody tr.is-sel td{background:var(--brand-100)}
+.tbl .r{text-align:right}
+.tbl .strong{font-weight:600;color:var(--ink-900)}
+.tbl .muted{color:var(--ink-500)}
+.up{color:var(--quote-up)}.down{color:var(--quote-down)}.flat{color:var(--quote-flat)}
+
+/* ============ 卡片 ============ */
+.metric{
+  background:var(--surface-1);border:1px solid var(--hairline);border-radius:12px;padding:18px 20px;
+  display:flex;flex-direction:column;gap:2px;min-height:112px;
+}
+.metric-label{font-size:11px;font-weight:500;letter-spacing:.3px;color:var(--ink-500);display:flex;align-items:center;gap:4px}
+.metric-value{
+  font-size:26px;font-weight:700;letter-spacing:-.5px;color:var(--ink-900);line-height:1.15;
+  font-variant-numeric:tabular-nums;margin-top:4px;
+}
+.metric-value.sm{font-size:20px;letter-spacing:-.3px}
+.metric-value.xl{font-size:40px;letter-spacing:-1px}
+.metric-foot{font-size:12px;color:var(--ink-500);margin-top:auto;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.hero-action{background:var(--navy-900);border-radius:12px;padding:24px;color:#fff;position:relative;overflow:hidden}
+.hero-action::after{
+  content:"";position:absolute;right:-70px;top:-70px;width:230px;height:230px;border-radius:50%;
+  background:radial-gradient(circle,rgba(53,103,214,.42),transparent 68%);
+}
+.hero-eyebrow{font-size:11px;font-weight:600;letter-spacing:1.4px;color:#7fa3e8;margin-bottom:10px}
+.hero-action h2{font-size:24px;font-weight:700;letter-spacing:-.3px;line-height:1.3;margin-bottom:8px}
+.hero-action p{font-size:13px;color:#b8c9e4;line-height:1.7;max-width:640px}
+.hero-meta{display:flex;flex-wrap:wrap;gap:20px;margin:18px 0 20px;position:relative}
+.hero-meta-item .k{font-size:11px;color:var(--nav-300);margin-bottom:3px}
+.hero-meta-item .v{font-size:15px;font-weight:600;color:#fff;font-variant-numeric:tabular-nums}
+
+/* ============ 导航 ============ */
+.nav-demo{background:var(--navy-900);border-radius:12px;padding:14px;width:248px}
+.nav-item{
+  display:flex;align-items:center;gap:10px;height:36px;padding:0 12px;border-radius:8px;
+  color:var(--nav-100);font-size:14px;cursor:pointer;border:0;background:transparent;width:100%;
+  text-align:left;transition:background var(--dur-fast),color var(--dur-fast);font-family:var(--font-sans);
+}
+.nav-item:hover{background:var(--navy-800);color:var(--nav-200)}
+.nav-item.is-active{background:var(--brand-500);color:#fff;font-weight:500}
+.nav-item.is-disabled{color:#5a6b8a;cursor:not-allowed}
+.nav-badge{
+  margin-left:auto;font-size:10px;font-weight:600;padding:1px 6px;border-radius:999px;
+  background:rgba(255,255,255,.16);color:#dbe6f7;font-variant-numeric:tabular-nums;
+}
+.nav-item.is-active .nav-badge{background:rgba(255,255,255,.24);color:#fff}
+.tabs{display:flex;gap:26px;border-bottom:1px solid var(--hairline)}
+.tab{
+  padding:0 0 11px;border:0;background:transparent;font-size:14px;font-weight:500;color:var(--ink-500);
+  cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;font-family:var(--font-sans);
+  transition:color var(--dur-fast),border-color var(--dur-fast);
+}
+.tab:hover{color:var(--ink-900)}
+.tab.is-active{color:var(--brand-600);border-bottom-color:var(--brand-500)}
+.tab:disabled{color:var(--ink-200);cursor:not-allowed}
+.pager{display:flex;align-items:center;gap:6px}
+.pager button{
+  min-width:32px;height:32px;padding:0 8px;border-radius:7px;border:1px solid var(--hairline-strong);
+  background:var(--surface-1);color:var(--ink-700);font-size:13px;cursor:pointer;
+  font-variant-numeric:tabular-nums;font-family:var(--font-sans);transition:all var(--dur-fast);
+}
+.pager button:hover:not(:disabled){border-color:var(--brand-400);color:var(--brand-600)}
+.pager button.is-active{background:var(--brand-500);border-color:var(--brand-500);color:#fff}
+.pager button:disabled{color:var(--ink-200);cursor:not-allowed}
+.crumb{display:flex;align-items:center;gap:7px;font-size:13px;color:var(--ink-500)}
+.crumb a{color:var(--ink-500);text-decoration:none}
+.crumb a:hover{color:var(--brand-600)}
+.crumb .sep{color:var(--ink-200)}
+.crumb .cur{color:var(--ink-900);font-weight:500}
+
+/* ============ 反馈 ============ */
+.banner{display:flex;align-items:flex-start;gap:11px;padding:13px 16px;border-radius:10px;font-size:13px;line-height:1.65}
+.banner .ic{flex:0 0 16px;margin-top:2px;font-weight:700}
+.banner.ok{background:var(--state-ok-bg);color:#0b6042;border:1px solid var(--state-ok-line)}
+.banner.info{background:var(--state-info-bg);color:#1c3f8f;border:1px solid var(--state-info-line)}
+.banner.warn{background:var(--state-warn-bg);color:#7a4a00;border:1px solid var(--state-warn-line)}
+.banner.err{background:var(--state-error-bg);color:#8f2029;border:1px solid var(--state-error-line)}
+.toast-demo{
+  display:flex;align-items:center;gap:10px;background:var(--navy-900);color:#fff;font-size:13px;
+  padding:12px 18px;border-radius:10px;box-shadow:var(--shadow-xl);max-width:420px;
+}
+.hint{
+  display:inline-grid;place-items:center;width:15px;height:15px;border-radius:50%;
+  background:var(--surface-3);color:var(--ink-500);font-size:10px;font-weight:600;
+  cursor:help;position:relative;flex:0 0 15px;
+}
+.hint:hover{background:var(--brand-100);color:var(--brand-600)}
+.hint:hover::after{
+  content:attr(data-tip);position:absolute;bottom:calc(100% + 8px);left:50%;transform:translateX(-50%);
+  background:var(--navy-900);color:#fff;font-size:12px;font-weight:400;line-height:1.6;
+  padding:9px 12px;border-radius:8px;width:250px;text-align:left;z-index:50;box-shadow:var(--shadow-lg);
+}
+.hint:hover::before{
+  content:"";position:absolute;bottom:calc(100% + 2px);left:50%;transform:translateX(-50%);
+  border:5px solid transparent;border-top-color:var(--navy-900);z-index:50;
+}
+.progress{height:5px;border-radius:3px;background:var(--surface-3);overflow:hidden}
+.progress span{display:block;height:100%;background:var(--brand-500);border-radius:3px;transition:width var(--dur-slow) var(--ease-out)}
+.track{height:4px;border-radius:3px;background:var(--surface-3);overflow:hidden}
+.track span{display:block;height:100%;border-radius:3px}
+
+/* ============ 引导 ============ */
+.step{display:flex;align-items:center;gap:12px;padding:13px 0;border-bottom:1px solid var(--hairline)}
+.step:last-child{border-bottom:0}
+.step-dot{width:22px;height:22px;border-radius:50%;flex:0 0 22px;display:grid;place-items:center;font-size:11px;font-weight:700;font-variant-numeric:tabular-nums}
+.step-dot.done{background:var(--state-ok);color:#fff}
+.step-dot.now{background:var(--surface-1);border:2px solid var(--brand-500);color:var(--brand-500)}
+.step-dot.todo{background:var(--surface-3);color:var(--ink-500)}
+.step-body{min-width:0;flex:1}
+.step-title{font-size:14px;font-weight:600;color:var(--ink-900);line-height:1.4}
+.step-desc{font-size:12px;color:var(--ink-500);line-height:1.5;margin-top:1px}
+.step.is-done{opacity:.55}
+
+/* ============ 浮层 ============ */
+.drawer-demo{
+  width:380px;max-width:100%;background:var(--surface-1);border-left:1px solid var(--hairline);
+  box-shadow:var(--shadow-lg);border-radius:12px;overflow:hidden;
+}
+.drawer-head{display:flex;align-items:center;gap:12px;padding:18px 20px;border-bottom:1px solid var(--hairline)}
+.drawer-head h3{font-size:17px;font-weight:600;color:var(--ink-900);letter-spacing:-.2px}
+.drawer-body{padding:18px 20px}
+.palette-demo{width:100%;background:var(--surface-1);border-radius:12px;box-shadow:var(--shadow-lg);padding:8px;border:1px solid var(--hairline)}
+.palette-input{width:100%;height:40px;border:0;background:transparent;font-size:14px;color:var(--ink-900);padding:0 12px;outline:none;font-family:var(--font-sans)}
+.palette-input::placeholder{color:var(--ink-500)}
+.palette-item{display:flex;align-items:center;gap:11px;padding:9px 12px;border-radius:8px;font-size:14px;color:var(--ink-700);cursor:pointer}
+.palette-item:hover,.palette-item.is-sel{background:var(--brand-50);color:var(--brand-700)}
+.palette-item .pi-k{margin-left:auto;font-size:11px;color:var(--ink-500);font-family:var(--font-num)}
+.dialog-demo{background:var(--surface-1);border-radius:12px;box-shadow:var(--shadow-xl);padding:24px;max-width:420px;border:1px solid var(--hairline)}
+.json{
+  font-family:var(--font-num);font-size:12px;line-height:1.75;color:var(--ink-700);
+  background:var(--surface-2);border:1px solid var(--hairline);border-radius:8px;padding:14px;
+  white-space:pre-wrap;overflow-wrap:break-word;
+}
+.json .k{color:var(--brand-700)}.json .s{color:var(--state-ok)}.json .n{color:#a1508c}
+
+/* ============ 状态页 ============ */
+.empty{
+  padding:38px 20px;text-align:center;border:1px dashed var(--hairline-strong);border-radius:12px;background:var(--surface-2);
+}
+.empty-ic{width:44px;height:44px;border-radius:12px;background:var(--surface-3);display:grid;place-items:center;margin:0 auto 14px;font-size:20px;color:var(--ink-500)}
+.empty strong{display:block;color:var(--ink-900);font-size:15px;font-weight:600;margin-bottom:7px}
+.empty p{font-size:13px;color:var(--ink-500);margin:0 auto 16px;max-width:400px;line-height:1.65}
+.skel{background:linear-gradient(90deg,var(--surface-3) 25%,#e6ebf4 37%,var(--surface-3) 63%);
+  background-size:400% 100%;animation:shim 1.4s ease infinite;border-radius:6px}
+@keyframes shim{0%{background-position:100% 50%}100%{background-position:0 50%}}
+.skel-row{display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid var(--hairline)}
+.skel-row:last-child{border-bottom:0}
+
+/* ============ 色彩令牌表 ============ */
+.token-row{display:flex;align-items:center;gap:14px;padding:10px 0;border-bottom:1px solid var(--hairline)}
+.token-row:last-child{border-bottom:0}
+.token-chip{width:48px;height:34px;border-radius:7px;flex:0 0 48px;border:1px solid rgba(16,39,77,.07)}
+.token-hex{font-family:var(--font-num);font-size:12px;color:var(--ink-700);width:78px;flex:0 0 78px}
+.token-var{font-family:var(--font-num);font-size:12px;color:var(--ink-500);width:136px;flex:0 0 136px}
+.token-ratio{font-family:var(--font-num);font-size:12px;color:var(--ink-700);width:104px;flex:0 0 104px;font-variant-numeric:tabular-nums}
+.token-use{font-size:12px;color:var(--ink-500);flex:1;min-width:0}
+.pass{color:var(--state-ok);font-weight:600}
+.fail{color:var(--state-error);font-weight:600}
+
+/* ============ 排版 ============ */
+.typo-row{display:flex;align-items:baseline;gap:18px;padding:13px 0;border-bottom:1px solid var(--hairline)}
+.typo-row:last-child{border-bottom:0}
+.typo-meta{font-family:var(--font-num);font-size:11px;color:var(--ink-500);flex:0 0 200px;line-height:1.6}
+.typo-demo{flex:1;min-width:0;color:var(--ink-900)}
+
+/* ============ 间距 / 圆角 ============ */
+.space-row{display:flex;align-items:center;gap:14px;padding:8px 0;border-bottom:1px solid var(--hairline)}
+.space-row:last-child{border-bottom:0}
+.space-bar{height:14px;background:var(--brand-200);border-radius:2px;flex:0 0 auto}
+.space-name{font-family:var(--font-num);font-size:12px;color:var(--ink-700);width:96px;flex:0 0 96px}
+.space-px{font-family:var(--font-num);font-size:12px;color:var(--ink-500);width:56px;flex:0 0 56px}
+.space-use{font-size:12px;color:var(--ink-500);flex:1;min-width:0}
+.radius-row{display:flex;align-items:center;gap:16px;padding:9px 0;border-bottom:1px solid var(--hairline)}
+.radius-row:last-child{border-bottom:0}
+.radius-box{width:56px;height:40px;background:var(--brand-100);border:1px solid var(--brand-200);flex:0 0 56px}
+.shadow-row{display:flex;align-items:center;gap:18px;padding:14px 0;border-bottom:1px solid var(--hairline)}
+.shadow-row:last-child{border-bottom:0}
+.shadow-box{width:96px;height:56px;background:var(--surface-1);border-radius:10px;flex:0 0 96px}
+
+@media(max-width:1100px){
+  .toc{display:none}
+  .shell{padding:0 16px}
+  .g4{grid-template-columns:repeat(2,1fr)}
+  .g3{grid-template-columns:repeat(2,1fr)}
+}
+/* 双列卡片在 900px 以下横向空间不足以容纳表格，提前折为单列 */
+@media(max-width:900px){
+  .g2{grid-template-columns:1fr}
+}
+@media(max-width:720px){
+  .g4,.g3,.g2{grid-template-columns:1fr}
+  .kitbar-sub{display:none}
+  .kitbar{padding:0 16px;gap:10px}
+  .kitbar-title{font-size:13px}
+  .toggle{padding:0 10px;font-size:12px}
+  .toggle .t-full{display:none}
+  .toggle .t-short{display:inline}
+  .state-label{flex-basis:auto;padding-top:0}
+  .state-row{flex-direction:column;gap:8px;align-items:stretch}
+  /* 令牌表窄屏改两行：色块+色值+比值 ／ 变量名+用途，避免横向滚动 */
+  .token-row{flex-wrap:wrap;gap:8px 12px;padding:12px 0}
+  .token-chip{width:40px;height:30px;flex:0 0 40px}
+  .token-hex{width:auto;flex:0 0 auto}
+  .token-ratio{width:auto;flex:0 0 auto;order:3}
+  .token-var{width:auto;flex:0 0 auto;order:4;color:var(--ink-700)}
+  .token-use{flex-basis:100%;order:5;color:var(--ink-500)}
+  /* 排版表窄屏改两行：元信息在上，示范在下 */
+  .typo-row{flex-direction:column;align-items:stretch;gap:6px}
+  .typo-meta{flex:0 0 auto;width:100%}
+  .typo-demo{width:100%;min-width:0}
+  .space-name{width:72px;flex:0 0 72px}
+  .space-px{width:44px;flex:0 0 44px}
+  /* 规格表：窄视口下由表格降级为「属性名 + 值」堆叠定义列表，避免横向滚动 */
+  .comp-foot{overflow-x:visible}
+  .comp-foot table,.comp-foot thead,.comp-foot tbody,.comp-foot tr,.comp-foot td{display:block;width:auto}
+  .comp-foot tr{padding:11px 0;border-bottom:1px solid var(--hairline)}
+  .comp-foot tr:first-child{display:none}
+  .comp-foot tr:last-child{border-bottom:0}
+  .comp-foot td{border:0;padding:2px 0;white-space:normal}
+  .comp-foot td:first-child{font-weight:600;color:var(--ink-900);font-size:13px;margin-bottom:3px}
+  .comp-foot td[data-label]::before{content:attr(data-label) "：";color:var(--ink-500);font-size:11px}
+  .comp-foot td.m{white-space:normal}
+}
+</style>
+</head>
+<body>
+
+<!-- ================= 顶栏 ================= -->
+<header class="kitbar">
+  <div class="kitbar-logo">Q</div>
+  <div class="kitbar-title">QUAP UI 组件库</div>
+  <div class="kitbar-sub">知衡量化 · 界面层权威定义</div>
+  <div class="kitbar-right">
+    <button class="toggle" id="specToggle" aria-pressed="false">
+      <span class="toggle-dot"></span><span class="t-full">尺寸标注</span><span class="t-short">标注</span>
+    </button>
+    <button class="toggle" id="focusToggle" aria-pressed="false">
+      <span class="toggle-dot"></span><span class="t-full">键盘焦点</span><span class="t-short">焦点</span>
+    </button>
+  </div>
+</header>
+
+<div class="shell">
+  <!-- ================= 目录 ================= -->
+  <nav class="toc">
+    <div class="toc-group">基础</div>
+    <a href="#s1">1 设计原则</a>
+    <a href="#s2">2 色彩令牌</a>
+    <a href="#s3">3 排版令牌</a>
+    <a href="#s4">4 间距与圆角</a>
+    <a href="#s5">5 深度与层级</a>
+    <div class="toc-group">组件</div>
+    <a href="#c1">按钮</a>
+    <a href="#c2">表单输入</a>
+    <a href="#c3">选择控件</a>
+    <a href="#c4">徽标与标签</a>
+    <a href="#c5">数据表格</a>
+    <a href="#c6">卡片与指标</a>
+    <a href="#c7">导航与页签</a>
+    <a href="#c8">反馈提示</a>
+    <a href="#c9">浮层</a>
+    <a href="#c10">引导与进度</a>
+    <a href="#c11">图表</a>
+    <a href="#c12">状态页</a>
+    <div class="toc-group">保障</div>
+    <a href="#s6">6 动效参数</a>
+    <a href="#s7">7 可访问性审计</a>
+    <a href="#s8">8 开发交付</a>
+  </nav>
+
+  <main class="doc">
+
+    <!-- ============ 1 设计原则 ============ -->
+    <section class="sec" id="s1">
+      <div class="sec-head">
+        <span class="sec-num">01</span>
+        <h1>设计原则</h1>
+        <p>本页是界面层的唯一权威定义。交互层（流程、信息架构、状态语言）见 <span class="mono">docs/DESIGN.md</span>，两者不重叠。</p>
+      </div>
+      <div class="grid g2">
+        <div class="card">
+          <h2 class="blk">六条硬规则</h2>
+          <div class="step" style="padding:9px 0"><div class="step-dot done" style="background:var(--brand-500);color:#fff">1</div><div class="step-body"><div class="step-title">红涨绿跌，不可反转</div><div class="step-desc">中国市场惯例，与欧美相反</div></div></div>
+          <div class="step" style="padding:9px 0"><div class="step-dot done" style="background:var(--brand-500);color:#fff">2</div><div class="step-body"><div class="step-title">所有数字等宽</div><div class="step-desc">金额、数量、涨跌幅、日期一律 <span class="mono">tnum</span>，数值列右对齐</div></div></div>
+          <div class="step" style="padding:9px 0"><div class="step-dot done" style="background:var(--brand-500);color:#fff">3</div><div class="step-body"><div class="step-title">强调色极度稀缺</div><div class="step-desc">靛蓝只给主按钮、导航选中、聚焦环、链接</div></div></div>
+          <div class="step" style="padding:9px 0"><div class="step-dot done" style="background:var(--brand-500);color:#fff">4</div><div class="step-body"><div class="step-title">卡片用边框，不用阴影</div><div class="step-desc">阴影只给真正脱离文档流的浮层</div></div></div>
+          <div class="step" style="padding:9px 0"><div class="step-dot done" style="background:var(--brand-500);color:#fff">5</div><div class="step-body"><div class="step-title">界面文案 100% 中文</div><div class="step-desc">代码标识符保留英文但须等宽且只在明细层</div></div></div>
+          <div class="step" style="padding:9px 0"><div class="step-dot done" style="background:var(--brand-500);color:#fff">6</div><div class="step-body"><div class="step-title">全部文字通过 WCAG AA</div><div class="step-desc">正常文字 4.5:1，大字 3:1，无一例外</div></div></div>
+        </div>
+        <div class="card">
+          <h2 class="blk">配色语义三分法</h2>
+          <div class="card-inset" style="margin-bottom:12px">
+            <div style="font-size:13px;font-weight:600;color:var(--ink-900);margin-bottom:6px">① 行情色 <span class="mono" style="font-size:11px;color:var(--ink-500)">quote-*</span></div>
+            <div style="font-size:12px;color:var(--ink-500);line-height:1.7">只表达<b>价格与收益的涨跌</b>。以裸文字、图表填充或方向标签底色出现；不用作按钮、卡片、横幅等容器底色。</div>
+            <div style="display:flex;gap:16px;margin-top:10px;font-weight:700;font-size:18px" class="num">
+              <span class="up">+3.42%</span><span class="down">-1.86%</span><span class="flat">0.00%</span>
+            </div>
+          </div>
+          <div class="card-inset" style="margin-bottom:12px">
+            <div style="font-size:13px;font-weight:600;color:var(--ink-900);margin-bottom:6px">② 状态色 <span class="mono" style="font-size:11px;color:var(--ink-500)">state-*</span></div>
+            <div style="font-size:12px;color:var(--ink-500);line-height:1.7">只表达<b>系统与任务的健康度</b>。以带底色的胶囊徽标形式出现。</div>
+            <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+              <span class="badge ok">正常</span><span class="badge warn">注意</span><span class="badge err">错误</span>
+            </div>
+          </div>
+          <div class="card-inset">
+            <div style="font-size:13px;font-weight:600;color:var(--ink-900);margin-bottom:6px">③ 方向标签 <span class="mono" style="font-size:11px;color:var(--ink-500)">tag-up / tag-down</span></div>
+            <div style="font-size:12px;color:var(--ink-500);line-height:1.7">表达<b>调整方向</b>（加仓／减仓），复用行情色板但以标签形式出现，与状态徽标在形状上区分。</div>
+            <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+              <span class="tag tag-up">建议加仓</span><span class="tag tag-down">建议减仓</span><span class="tag">维持</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="banner warn" style="margin-top:16px">
+        <span class="ic">!</span>
+        <div><b>三者不可混用。</b>「综合得分 1.842」「Rank IC 0.0482」「动量 0.182」是统计量而非价格变动，一律用 <span class="mono">--ink-900</span> 中性色；它们的好坏由相邻的状态徽标表达，不由颜色表达。同理，覆盖率、达标率这类质量指标不上行情色；「通过／不通过」用状态色 <span class="mono">--state-ok</span> / <span class="mono">--state-error</span>，不用涨跌色。</div>
+      </div>
+    </section>
+
+    <!-- ============ 2 色彩令牌 ============ -->
+    <section class="sec" id="s2">
+      <div class="sec-head">
+        <span class="sec-num">02</span>
+        <h1>色彩令牌</h1>
+        <p>对比度列为该色在主要承载背景上的实测 WCAG 比值。所有承载文字的颜色均 ≥4.5:1。</p>
+      </div>
+
+      <h2 class="blk">品牌与强调 <span class="note" style="display:inline">— 靛蓝是全站唯一彩色强调</span></h2>
+      <div class="card">
+        <div class="token-row"><div class="token-chip" style="background:var(--brand-700)"></div><span class="token-hex">#1d3f7d</span><span class="token-var">--brand-700</span><span class="token-ratio">10.20:1 <span class="pass">AA</span></span><span class="token-use">深色底上的链接、图表主色</span></div>
+        <div class="token-row"><div class="token-chip" style="background:var(--brand-600)"></div><span class="token-hex">#2a55c8</span><span class="token-var">--brand-600</span><span class="token-ratio">6.50:1 <span class="pass">AA</span></span><span class="token-use">主按钮 hover 态、链接 hover</span></div>
+        <div class="token-row"><div class="token-chip" style="background:var(--brand-500)"></div><span class="token-hex">#3567d6</span><span class="token-var">--brand-500</span><span class="token-ratio">5.17:1 <span class="pass">AA</span></span><span class="token-use">主色：主按钮、导航选中、聚焦环、链接</span></div>
+        <div class="token-row"><div class="token-chip" style="background:var(--brand-400)"></div><span class="token-hex">#6b93e6</span><span class="token-var">--brand-400</span><span class="token-ratio">—</span><span class="token-use">图表次要序列、进度条填充</span></div>
+        <div class="token-row"><div class="token-chip" style="background:var(--brand-200)"></div><span class="token-hex">#c7d8f7</span><span class="token-var">--brand-200</span><span class="token-ratio">—</span><span class="token-use">进度条轨道、选中行底</span></div>
+        <div class="token-row"><div class="token-chip" style="background:var(--brand-100)"></div><span class="token-hex">#e4ecfc</span><span class="token-var">--brand-100</span><span class="token-ratio">—</span><span class="token-use">信息标签底、表格选中行</span></div>
+        <div class="token-row"><div class="token-chip" style="background:var(--brand-50)"></div><span class="token-hex">#f2f6fd</span><span class="token-var">--brand-50</span><span class="token-ratio">—</span><span class="token-use">表格行 hover 态</span></div>
+      </div>
+
+      <h2 class="blk">深色面 <span class="note" style="display:inline">— 侧边栏与主行动卡；其上文字使用深色面专用令牌</span></h2>
+      <div class="card">
+        <div class="token-row"><div class="token-chip" style="background:var(--navy-900)"></div><span class="token-hex">#122340</span><span class="token-var">--navy-900</span><span class="token-ratio">—</span><span class="token-use">侧边栏、主行动卡填充</span></div>
+        <div class="token-row"><div class="token-chip" style="background:var(--navy-800)"></div><span class="token-hex">#1a3055</span><span class="token-var">--navy-800</span><span class="token-ratio">—</span><span class="token-use">侧边栏 hover 态</span></div>
+        <div class="token-row"><div class="token-chip" style="background:var(--navy-700)"></div><span class="token-hex">#24406e</span><span class="token-var">--navy-700</span><span class="token-ratio">—</span><span class="token-use">侧边栏分隔线</span></div>
+        <div class="token-row"><div class="token-chip" style="background:var(--nav-100)"></div><span class="token-hex">#a8bcd9</span><span class="token-var">--nav-100</span><span class="token-ratio">8.10:1 <span class="pass">AA</span></span><span class="token-use">侧边栏未选中项文字</span></div>
+        <div class="token-row"><div class="token-chip" style="background:var(--nav-200)"></div><span class="token-hex">#dce6f5</span><span class="token-var">--nav-200</span><span class="token-ratio">10.44:1 <span class="pass">AA</span></span><span class="token-use">侧边栏 hover 文字、品牌名</span></div>
+        <div class="token-row"><div class="token-chip" style="background:var(--nav-300)"></div><span class="token-hex">#7b8fb3</span><span class="token-var">--nav-300</span><span class="token-ratio">4.79:1 <span class="pass">AA</span></span><span class="token-use">侧边栏组标题与脚注</span></div>
+        <div class="token-row"><div class="token-chip" style="background:var(--nav-ok)"></div><span class="token-hex">#5cc79a</span><span class="token-var">--nav-ok</span><span class="token-ratio">7.59:1 <span class="pass">AAA</span></span><span class="token-use">深色面状态文字：就绪（须配 ✓ 字形）</span></div>
+        <div class="token-row"><div class="token-chip" style="background:var(--nav-err)"></div><span class="token-hex">#f0848c</span><span class="token-var">--nav-err</span><span class="token-ratio">6.26:1 <span class="pass">AA</span></span><span class="token-use">深色面状态文字：受阻（须配 ✕ 字形）</span></div>
+      </div>
+
+      <h2 class="blk">文字 <span class="note" style="display:inline">— 三级文字灰 + 一级非文字色。不要新增第四级文字灰</span></h2>
+      <div class="card">
+        <div class="token-row"><div class="token-chip" style="background:var(--ink-900)"></div><span class="token-hex">#0e1c33</span><span class="token-var">--ink-900</span><span class="token-ratio">17.04:1 <span class="pass">AAA</span></span><span class="token-use">标题、指标数字、正文强调</span></div>
+        <div class="token-row"><div class="token-chip" style="background:var(--ink-700)"></div><span class="token-hex">#2b3c57</span><span class="token-var">--ink-700</span><span class="token-ratio">11.13:1 <span class="pass">AAA</span></span><span class="token-use">正文、表格单元格</span></div>
+        <div class="token-row"><div class="token-chip" style="background:var(--ink-500)"></div><span class="token-hex">#5b6c86</span><span class="token-var">--ink-500</span><span class="token-ratio">5.34:1 <span class="pass">AA</span></span><span class="token-use">次级说明、表头、时间戳、占位符</span></div>
+        <div class="token-row"><div class="token-chip" style="background:var(--ink-200)"></div><span class="token-hex">#aab6c8</span><span class="token-var">--ink-200</span><span class="token-ratio">2.05:1 <span class="fail">非文字</span></span><span class="token-use"><b>仅限</b>分隔线、装饰图标、禁用态填充</span></div>
+      </div>
+      <div class="note">低于 <span class="mono">--ink-500</span> 的灰在任何背景上都无法同时满足 4.5:1。若需要"更弱的文字"，应<b>减小字号或改为行内说明</b>，而不是调浅颜色。</div>
+
+      <h2 class="blk">表面与边框</h2>
+      <div class="card">
+        <div class="token-row"><div class="token-chip" style="background:var(--canvas)"></div><span class="token-hex">#f5f7fb</span><span class="token-var">--canvas</span><span class="token-ratio">—</span><span class="token-use">页面底色</span></div>
+        <div class="token-row"><div class="token-chip" style="background:var(--surface-1)"></div><span class="token-hex">#ffffff</span><span class="token-var">--surface-1</span><span class="token-ratio">—</span><span class="token-use">卡片、表格、抽屉、浮层</span></div>
+        <div class="token-row"><div class="token-chip" style="background:var(--surface-2)"></div><span class="token-hex">#fbfcfe</span><span class="token-var">--surface-2</span><span class="token-ratio">—</span><span class="token-use">卡片内嵌块、只读区</span></div>
+        <div class="token-row"><div class="token-chip" style="background:var(--surface-3)"></div><span class="token-hex">#eef2f8</span><span class="token-var">--surface-3</span><span class="token-ratio">—</span><span class="token-use">表格表头、分区底、骨架屏</span></div>
+        <div class="token-row"><div class="token-chip" style="background:var(--hairline)"></div><span class="token-hex">#e3e9f3</span><span class="token-var">--hairline</span><span class="token-ratio">—</span><span class="token-use">卡片边框、行分隔线</span></div>
+        <div class="token-row"><div class="token-chip" style="background:var(--hairline-strong)"></div><span class="token-hex">#cfd8e6</span><span class="token-var">--hairline-strong</span><span class="token-ratio">—</span><span class="token-use">输入框边框、强分隔</span></div>
+      </div>
+
+      <h2 class="blk">行情色 <span class="note" style="display:inline">— 红涨绿跌，色相角未变，仅按 AA 压暗亮度</span></h2>
+      <div class="card">
+        <div class="token-row"><div class="token-chip" style="background:var(--quote-up)"></div><span class="token-hex">#d32935</span><span class="token-var">--quote-up</span><span class="token-ratio">5.07:1 <span class="pass">AA</span></span><span class="token-use">涨：涨幅数字、涨箭头（原 #d93a45）</span></div>
+        <div class="token-row"><div class="token-chip" style="background:var(--quote-down)"></div><span class="token-hex">#0c8050</span><span class="token-var">--quote-down</span><span class="token-ratio">4.98:1 <span class="pass">AA</span></span><span class="token-use">跌：跌幅数字、跌箭头（原 #0f9d63）</span></div>
+        <div class="token-row"><div class="token-chip" style="background:var(--quote-flat)"></div><span class="token-hex">#5b6c86</span><span class="token-var">--quote-flat</span><span class="token-ratio">5.34:1 <span class="pass">AA</span></span><span class="token-use">平：0.00% 或数据缺失（显示为「—」）</span></div>
+      </div>
+
+      <h2 class="blk">状态语义色 <span class="note" style="display:inline">— 与行情色严格分离；徽标文字与底色对比度均 ≥4.5:1</span></h2>
+      <div class="card">
+        <div class="token-row"><div class="token-chip" style="background:var(--state-ok)"></div><span class="token-hex">#117e56</span><span class="token-var">--state-ok</span><span class="token-ratio">4.50:1 <span class="pass">AA</span></span><span class="token-use">正常 / 已完成 / 已就绪</span></div>
+        <div class="token-row"><div class="token-chip" style="background:var(--state-warn)"></div><span class="token-hex">#a36100</span><span class="token-var">--state-warn</span><span class="token-ratio">4.52:1 <span class="pass">AA</span></span><span class="token-use">注意 / 待验证 / 覆盖不足</span></div>
+        <div class="token-row"><div class="token-chip" style="background:var(--state-error)"></div><span class="token-hex">#c8303c</span><span class="token-var">--state-error</span><span class="token-ratio">4.67:1 <span class="pass">AA</span></span><span class="token-use">失败 / 异常 / 连接断开</span></div>
+        <div class="token-row"><div class="token-chip" style="background:var(--state-info)"></div><span class="token-hex">#2a55c8</span><span class="token-var">--state-info</span><span class="token-ratio">5.63:1 <span class="pass">AA</span></span><span class="token-use">提示 / 说明</span></div>
+        <div class="token-row"><div class="token-chip" style="background:var(--state-busy)"></div><span class="token-hex">#6a5ad2</span><span class="token-var">--state-busy</span><span class="token-ratio">4.51:1 <span class="pass">AA</span></span><span class="token-use">执行中 / 排队中</span></div>
+        <div class="token-row"><div class="token-chip" style="background:var(--state-idle)"></div><span class="token-hex">#5e6f88</span><span class="token-var">--state-idle</span><span class="token-ratio">4.52:1 <span class="pass">AA</span></span><span class="token-use">未开始 / 已归档 / 不适用</span></div>
+      </div>
+
+      <h2 class="blk">语义面板描边 <span class="note" style="display:inline">— tinted 面板（横幅、判决条、卡点块）的 1px 边；是同名 -bg 的同色相压深</span></h2>
+      <div class="card">
+        <div class="token-row"><div class="token-chip" style="background:var(--state-ok-line)"></div><span class="token-hex">#bfe4d4</span><span class="token-var">--state-ok-line</span><span class="token-ratio">—</span><span class="token-use">正常面板描边（底色 --state-ok-bg）</span></div>
+        <div class="token-row"><div class="token-chip" style="background:var(--state-info-line)"></div><span class="token-hex">#c9daf5</span><span class="token-var">--state-info-line</span><span class="token-ratio">—</span><span class="token-use">信息面板描边（底色 --state-info-bg）</span></div>
+        <div class="token-row"><div class="token-chip" style="background:var(--state-warn-line)"></div><span class="token-hex">#f0dcb4</span><span class="token-var">--state-warn-line</span><span class="token-ratio">—</span><span class="token-use">注意面板描边（底色 --state-warn-bg）</span></div>
+        <div class="token-row"><div class="token-chip" style="background:var(--state-error-line)"></div><span class="token-hex">#f2c9cd</span><span class="token-var">--state-error-line</span><span class="token-ratio">—</span><span class="token-use">错误面板描边（底色 --state-error-bg）</span></div>
+      </div>
+      <div class="note">「未开始」读起来是"中性"靠的是<b>没有颜色</b>（相对其余五种的彩色），不是靠低对比度。把灰调浅会掉到 3:1 以下，成为无障碍缺陷。</div>
+    </section>
+
+    <!-- ============ 3 排版令牌 ============ -->
+    <section class="sec" id="s3">
+      <div class="sec-head">
+        <span class="sec-num">03</span>
+        <h1>排版令牌</h1>
+        <p>中文行高必须比拉丁文松：正文 1.60、说明 1.50 是最小值。字号下限 12px。</p>
+      </div>
+      <div class="card">
+        <div class="typo-row"><span class="typo-meta">display<br>34 / 700 / 1.25 / -0.6px</span><span class="typo-demo" style="font-size:34px;font-weight:700;letter-spacing:-.6px;line-height:1.25">今日概览</span></div>
+        <div class="typo-row"><span class="typo-meta">title-lg<br>24 / 600 / 1.30 / -0.4px</span><span class="typo-demo" style="font-size:24px;font-weight:600;letter-spacing:-.4px;line-height:1.3">市场板块概览</span></div>
+        <div class="typo-row"><span class="typo-meta">title<br>19 / 600 / 1.35 / -0.2px</span><span class="typo-demo" style="font-size:19px;font-weight:600;letter-spacing:-.2px;line-height:1.35">我的组合 · 稳健成长</span></div>
+        <div class="typo-row"><span class="typo-meta">title-sm<br>16 / 600 / 1.40 / -0.1px</span><span class="typo-demo" style="font-size:16px;font-weight:600;letter-spacing:-.1px;line-height:1.4">建立我的组合</span></div>
+        <div class="typo-row"><span class="typo-meta">body<br>14 / 400 / 1.60</span><span class="typo-demo" style="font-size:14px;line-height:1.6">本页展示的是目标配置而非实际持仓。权重之和（含现金）必须等于 100%，系统不做自动归一化。</span></div>
+        <div class="typo-row"><span class="typo-meta">body-sm<br>13 / 400 / 1.55</span><span class="typo-demo" style="font-size:13px;line-height:1.55">表格单元格与辅助正文 · 贵州茅台 · 沪深主板</span></div>
+        <div class="typo-row"><span class="typo-meta">caption<br>12 / 400 / 1.50</span><span class="typo-demo" style="font-size:12px;line-height:1.5;color:var(--ink-500)">数据口径说明 · 2026-09-25 15:00 收盘 · 未复权人民币价格</span></div>
+        <div class="typo-row"><span class="typo-meta">micro<br>11 / 500 / 1.40 / +0.3px</span><span class="typo-demo" style="font-size:11px;font-weight:500;letter-spacing:.3px;line-height:1.4;color:var(--ink-500)">表格表头 / 眉标 / 徽标</span></div>
+        <div class="typo-row"><span class="typo-meta">metric-xl<br>40 / 700 / 1.10 / -1px</span><span class="typo-demo num" style="font-size:40px;font-weight:700;letter-spacing:-1px;line-height:1.1">5,412</span></div>
+        <div class="typo-row"><span class="typo-meta">metric<br>26 / 700 / 1.15 / -0.5px</span><span class="typo-demo num" style="font-size:26px;font-weight:700;letter-spacing:-.5px;line-height:1.15">1,682.40</span></div>
+        <div class="typo-row"><span class="typo-meta">num<br>13 / 500 / 1.50 / tnum</span><span class="typo-demo mono num" style="font-size:13px;font-weight:500">5,412,806.00</span></div>
+      </div>
+      <div class="card" style="margin-top:16px">
+        <h2 class="blk">字体栈</h2>
+        <div class="mono" style="font-size:12px;color:var(--ink-700);background:var(--surface-2);padding:14px;border-radius:8px;line-height:1.9;overflow-x:auto">
+          --font-sans: Inter, -apple-system, BlinkMacSystemFont,<br>
+          &nbsp;&nbsp;"PingFang SC", "HarmonyOS Sans SC", "Microsoft YaHei",<br>
+          &nbsp;&nbsp;"Source Han Sans SC", system-ui, sans-serif;<br>
+          --font-num: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+        </div>
+        <div class="note"><b>Inter 置于苹方之前是有意为之：</b>让拉丁字母与阿拉伯数字走 Inter（字宽统一、数字造型清晰），中文自动回落到苹方。这是中文界面里提升数字可读性最省力的一招。</div>
+      </div>
+    </section>
+
+    <!-- ============ 4 间距与圆角 ============ -->
+    <section class="sec" id="s4">
+      <div class="sec-head">
+        <span class="sec-num">04</span>
+        <h1>间距与圆角</h1>
+        <p>基数 4px。间距用于建立区块边界感，而不是填充空白。</p>
+      </div>
+      <div class="grid g2">
+        <div class="card">
+          <h2 class="blk">间距阶梯</h2>
+          <div class="space-row"><span class="space-name">--space-xxs</span><span class="space-px">4px</span><div class="space-bar" style="width:4px"></div><span class="space-use">图标与文字间隙</span></div>
+          <div class="space-row"><span class="space-name">--space-xs</span><span class="space-px">8px</span><div class="space-bar" style="width:8px"></div><span class="space-use">同组元素间隙</span></div>
+          <div class="space-row"><span class="space-name">--space-sm</span><span class="space-px">12px</span><div class="space-bar" style="width:12px"></div><span class="space-use">卡片内次级间隙</span></div>
+          <div class="space-row"><span class="space-name">--space-md</span><span class="space-px">16px</span><div class="space-bar" style="width:16px"></div><span class="space-use"><b>卡片间距</b>、表单字段间距</span></div>
+          <div class="space-row"><span class="space-name">--space-lg</span><span class="space-px">20px</span><div class="space-bar" style="width:20px"></div><span class="space-use"><b>卡片内边距</b></span></div>
+          <div class="space-row"><span class="space-name">--space-xl</span><span class="space-px">24px</span><div class="space-bar" style="width:24px"></div><span class="space-use">跨组间距、主行动卡内边距</span></div>
+          <div class="space-row"><span class="space-name">--space-xxl</span><span class="space-px">32px</span><div class="space-bar" style="width:32px"></div><span class="space-use">区块间距、页面留白</span></div>
+          <div class="space-row"><span class="space-name">--space-xxxl</span><span class="space-px">48px</span><div class="space-bar" style="width:48px"></div><span class="space-use">大区块间距</span></div>
+        </div>
+        <div class="card">
+          <h2 class="blk">圆角阶梯</h2>
+          <div class="radius-row"><div class="radius-box" style="border-radius:4px"></div><span class="space-name">xs</span><span class="space-px">4px</span><span class="space-use">小标签、状态色块</span></div>
+          <div class="radius-row"><div class="radius-box" style="border-radius:6px"></div><span class="space-name">sm</span><span class="space-px">6px</span><span class="space-use">内联标签、色板</span></div>
+          <div class="radius-row"><div class="radius-box" style="border-radius:8px"></div><span class="space-name">md</span><span class="space-px">8px</span><span class="space-use"><b>所有按钮、输入框</b></span></div>
+          <div class="radius-row"><div class="radius-box" style="border-radius:12px"></div><span class="space-name">lg</span><span class="space-px">12px</span><span class="space-use"><b>所有卡片、表格容器</b></span></div>
+          <div class="radius-row"><div class="radius-box" style="border-radius:16px"></div><span class="space-name">xl</span><span class="space-px">16px</span><span class="space-use">登录卡、大面板</span></div>
+          <div class="radius-row"><div class="radius-box" style="border-radius:9999px"></div><span class="space-name">pill</span><span class="space-px">9999</span><span class="space-use">状态徽标、头像</span></div>
+        </div>
+      </div>
+      <div class="card" style="margin-top:16px">
+        <h2 class="blk">栅格与容器</h2>
+        <div class="grid g4">
+          <div class="card-inset"><div class="mono" style="font-size:12px;color:var(--ink-700)">max-width</div><div style="font-size:19px;font-weight:600;color:var(--ink-900)">1440px</div></div>
+          <div class="card-inset"><div class="mono" style="font-size:12px;color:var(--ink-700)">columns</div><div style="font-size:19px;font-weight:600;color:var(--ink-900)">12</div></div>
+          <div class="card-inset"><div class="mono" style="font-size:12px;color:var(--ink-700)">gutter</div><div style="font-size:19px;font-weight:600;color:var(--ink-900)">16px</div></div>
+          <div class="card-inset"><div class="mono" style="font-size:12px;color:var(--ink-700)">page padding</div><div style="font-size:19px;font-weight:600;color:var(--ink-900)">28px</div></div>
+        </div>
+        <div class="note">侧边栏固定 248px，主内容区独立滚动。指标区 4 列 → 平板 2 列 → 手机 1 列；板块卡 3 列 → 平板 2 列 → 手机 1 列。</div>
+      </div>
+    </section>
+
+    <!-- ============ 5 深度与层级 ============ -->
+    <section class="sec" id="s5">
+      <div class="sec-head">
+        <span class="sec-num">05</span>
+        <h1>深度与层级</h1>
+        <p>层级优先用表面阶梯与发丝边框表达，而非阴影。阴影只在元素真正脱离文档流时出现。</p>
+      </div>
+      <div class="card">
+        <div class="shadow-row"><div class="shadow-box" style="border:1px solid var(--hairline)"></div><div><div style="font-size:13px;font-weight:600;color:var(--ink-900)">层级 1 · 发丝分离</div><div class="mono" style="font-size:11px;color:var(--ink-500);margin-top:3px">1px solid var(--hairline)，无阴影</div><div style="font-size:12px;color:var(--ink-500);margin-top:4px">默认卡片、表格容器、指标磁贴</div></div></div>
+        <div class="shadow-row"><div class="shadow-box" style="background:var(--surface-2)"></div><div><div style="font-size:13px;font-weight:600;color:var(--ink-900)">层级 2 · 内嵌</div><div class="mono" style="font-size:11px;color:var(--ink-500);margin-top:3px">background: var(--surface-2)，无边框</div><div style="font-size:12px;color:var(--ink-500);margin-top:4px">卡片内的次级块、只读区</div></div></div>
+        <div class="shadow-row"><div class="shadow-box" style="box-shadow:var(--shadow-sm)"></div><div><div style="font-size:13px;font-weight:600;color:var(--ink-900)">层级 3 · 微浮</div><div class="mono" style="font-size:11px;color:var(--ink-500);margin-top:3px">0 1px 3px rgba(16,39,77,.07), 0 1px 2px rgba(16,39,77,.04)</div><div style="font-size:12px;color:var(--ink-500);margin-top:4px">下拉菜单、气泡、悬浮提示</div></div></div>
+        <div class="shadow-row"><div class="shadow-box" style="box-shadow:var(--shadow-lg)"></div><div><div style="font-size:13px;font-weight:600;color:var(--ink-900)">层级 4 · 浮层</div><div class="mono" style="font-size:11px;color:var(--ink-500);margin-top:3px">0 12px 32px rgba(16,39,77,.10), 0 2px 8px rgba(16,39,77,.06)</div><div style="font-size:12px;color:var(--ink-500);margin-top:4px">右侧详情抽屉</div></div></div>
+        <div class="shadow-row"><div class="shadow-box" style="box-shadow:var(--shadow-xl)"></div><div><div style="font-size:13px;font-weight:600;color:var(--ink-900)">层级 5 · 模态</div><div class="mono" style="font-size:11px;color:var(--ink-500);margin-top:3px">0 24px 64px rgba(16,39,77,.14), 0 4px 16px rgba(16,39,77,.07)</div><div style="font-size:12px;color:var(--ink-500);margin-top:4px">命令面板、确认对话框（配 rgba(12,24,46,.42) 遮罩）</div></div></div>
+      </div>
+      <div class="note"><b>阴影一律海军蓝着色，不用纯黑。</b>纯黑阴影在浅灰底上会发脏，海军蓝阴影能让浮层"浮起来"而不是"糊上去"。z-index：内容 0 / 粘性 10 / 下拉 100 / 侧边栏 500 / 抽屉 1000 / 模态 2000 / Toast 2100。</div>
+    </section>
+
+    <!-- ============ 组件：按钮 ============ -->
+    <section class="sec" id="c1">
+      <div class="sec-head"><span class="sec-num">组件</span><h1>按钮</h1><p>每个视口最多一个主按钮。用层级表达操作优先级，不要让用户在同权重按钮之间猜。</p></div>
+      <div class="comp">
+        <div class="comp-head"><h3>主按钮</h3><code>.btn-primary</code><p>默认行动按钮。靛蓝填充是全站唯一的大面积强调色用法。</p></div>
+        <div class="comp-body">
+          <div class="state-row"><div class="state-label">默认</div><div class="state-demo">
+            <button class="btn btn-primary">进入工作台</button><span class="spec">h36 · px16 · r8</span>
+          </div></div>
+          <div class="state-row"><div class="state-label">悬停</div><div class="state-demo">
+            <button class="btn btn-primary f-hover">进入工作台</button><span class="spec">bg → --brand-600</span>
+          </div></div>
+          <div class="state-row"><div class="state-label">按下</div><div class="state-demo">
+            <button class="btn btn-primary f-active">进入工作台</button><span class="spec">bg → --brand-700</span>
+          </div></div>
+          <div class="state-row"><div class="state-label">聚焦</div><div class="state-demo">
+            <button class="btn btn-primary f-focus">进入工作台</button><span class="spec">0 0 0 3px rgba(53,103,214,.22)</span>
+          </div></div>
+          <div class="state-row"><div class="state-label">加载中</div><div class="state-demo">
+            <button class="btn btn-primary is-loading">进入工作台</button><span class="spec">文字透明 + 14px 转圈</span>
+          </div></div>
+          <div class="state-row"><div class="state-label">禁用</div><div class="state-demo">
+            <button class="btn btn-primary" disabled>进入工作台</button><span class="spec">bg --surface-3 · 文字 --ink-200</span>
+          </div></div>
+        </div>
+        <div class="comp-foot"><table>
+          <tr><th>属性</th><th>值</th><th>说明</th></tr>
+          <tr><td>高度</td><td class="m" data-label="值">36px（sm 30 / lg 44）</td><td data-label="说明">触摸设备提升至 44px</td></tr>
+          <tr><td>水平内边距</td><td class="m" data-label="值">16px（sm 12 / lg 20）</td><td data-label="说明">图标按钮固定 36×36</td></tr>
+          <tr><td>圆角</td><td class="m" data-label="值">8px</td><td data-label="说明">不使用 pill，pill 留给徽标</td></tr>
+          <tr><td>字号 / 字重</td><td class="m" data-label="值">14px / 500</td><td data-label="说明">小号 13px，大号 15px</td></tr>
+          <tr><td>过渡</td><td class="m" data-label="值">background 120ms ease-in-out</td><td data-label="说明">仅过渡背景色，不做位移</td></tr>
+          <tr><td>聚焦环</td><td class="m" data-label="值">0 0 0 3px rgba(53,103,214,.22)</td><td data-label="说明">仅 :focus-visible，不干扰鼠标用户</td></tr>
+        </table></div>
+      </div>
+
+      <div class="comp">
+        <div class="comp-head"><h3>次按钮 / 文字按钮 / 危险按钮</h3><code>.btn-secondary · .btn-ghost · .btn-danger</code></div>
+        <div class="comp-body">
+          <div class="state-row"><div class="state-label">默认</div><div class="state-demo">
+            <button class="btn btn-secondary">保存筛选条件</button>
+            <button class="btn btn-ghost">查看全部</button>
+            <button class="btn btn-danger">删除版本</button>
+          </div></div>
+          <div class="state-row"><div class="state-label">悬停</div><div class="state-demo">
+            <button class="btn btn-secondary f-hover">保存筛选条件</button>
+            <button class="btn btn-ghost f-hover">查看全部</button>
+            <button class="btn btn-danger f-hover">删除版本</button>
+          </div></div>
+          <div class="state-row"><div class="state-label">禁用</div><div class="state-demo">
+            <button class="btn btn-secondary" disabled>保存筛选条件</button>
+            <button class="btn btn-ghost" disabled>查看全部</button>
+          </div></div>
+          <div class="state-row"><div class="state-label">深色面</div><div class="state-demo" style="background:var(--navy-900);padding:14px 16px;border-radius:8px">
+            <button class="btn btn-solid-white">查看并采纳</button>
+            <button class="btn btn-on-dark">稍后处理</button>
+          </div></div>
+        </div>
+        <div class="comp-foot"><table>
+          <tr><th>变体</th><th>背景</th><th>文字</th><th>边框</th><th>用途</th></tr>
+          <tr><td>次按钮</td><td class="m" data-label="背景">--surface-1</td><td class="m" data-label="文字">--ink-900</td><td class="m" data-label="边框">1px --hairline-strong</td><td data-label="用途">与主按钮配对的次要操作</td></tr>
+          <tr><td>文字按钮</td><td class="m" data-label="背景">transparent</td><td class="m" data-label="文字">--ink-700</td><td class="m" data-label="边框">无</td><td data-label="用途">卡片内低权重操作，高 32px</td></tr>
+          <tr><td>危险按钮</td><td class="m" data-label="背景">--surface-1</td><td class="m" data-label="文字">--state-error</td><td class="m" data-label="边框">1px #f0c4c8</td><td data-label="用途"><b>不用红色填充</b>——浅底上过刺眼且与「涨」的红混淆</td></tr>
+          <tr><td>深色面按钮</td><td class="m" data-label="背景">rgba(255,255,255,.14)</td><td class="m" data-label="文字">#fff</td><td class="m" data-label="边框">rgba(255,255,255,.22)</td><td data-label="用途">仅用于主行动卡</td></tr>
+        </table></div>
+      </div>
+    </section>
+
+    <!-- ============ 组件：表单 ============ -->
+    <section class="sec" id="c2">
+      <div class="sec-head"><span class="sec-num">组件</span><h1>表单输入</h1><p>每个输入框必须有常驻可见标签。占位符不能代替标签——输入后它消失，用户会忘记这个字段是什么。</p></div>
+      <div class="comp">
+        <div class="comp-head"><h3>文本输入</h3><code>.input</code><p>字段级说明放标签右侧的问号气泡，不放占位符。</p></div>
+        <div class="comp-body">
+          <div class="state-row"><div class="state-label">默认</div><div class="state-demo">
+            <div style="width:280px"><div class="field-label">股票代码</div><input class="input" placeholder="例如 600519"></div>
+            <span class="spec">h36 · px12 · r8 · 1px --hairline-strong</span>
+          </div></div>
+          <div class="state-row"><div class="state-label">悬停</div><div class="state-demo">
+            <div style="width:280px"><div class="field-label">股票代码</div><input class="input" placeholder="例如 600519" style="border-color:var(--ink-200)"></div>
+            <span class="spec">border → --ink-200</span>
+          </div></div>
+          <div class="state-row"><div class="state-label">聚焦</div><div class="state-demo">
+            <div style="width:280px"><div class="field-label">股票代码</div><input class="input f-focus" value="600519"></div>
+            <span class="spec">border --brand-500 + 3px 聚焦环</span>
+          </div></div>
+          <div class="state-row"><div class="state-label">已填写</div><div class="state-demo">
+            <div style="width:280px"><div class="field-label">组合名称</div><input class="input" value="稳健成长"></div>
+          </div></div>
+          <div class="state-row"><div class="state-label">校验失败</div><div class="state-demo">
+            <div style="width:280px">
+              <div class="field-label">股票代码<span class="field-req">*</span></div>
+              <input class="input is-error" value="60051">
+              <div class="field-err">✕ 请输入 6 位沪深股票代码</div>
+            </div>
+            <span class="spec">border --state-error</span>
+          </div></div>
+          <div class="state-row"><div class="state-label">带后缀</div><div class="state-demo">
+            <div style="width:280px"><div class="field-label">行情轮询间隔</div><div class="input-wrap"><input class="input" value="30"><span class="input-affix">秒</span></div></div>
+          </div></div>
+          <div class="state-row"><div class="state-label">禁用</div><div class="state-demo">
+            <div style="width:280px"><div class="field-label">访问令牌</div><input class="input" value="由部署环境注入" disabled></div>
+          </div></div>
+        </div>
+        <div class="comp-foot"><table>
+          <tr><th>属性</th><th>值</th></tr>
+          <tr><td>高度 / 圆角</td><td class="m" data-label="值">36px / 8px</td></tr>
+          <tr><td>内边距</td><td class="m" data-label="值">0 12px（多行 9px 12px）</td></tr>
+          <tr><td>标签</td><td class="m" data-label="值">13px / 500 / --ink-700，距输入框 6px</td></tr>
+          <tr><td>说明文字</td><td class="m" data-label="值">12px / --ink-500，距输入框 5px</td></tr>
+          <tr><td>字段间距</td><td class="m" data-label="值">16px</td></tr>
+          <tr><td>错误提示</td><td class="m" data-label="值">12px / --state-error，前缀 ✕ 图标，不用仅靠颜色区分</td></tr>
+        </table></div>
+      </div>
+      <div class="comp">
+        <div class="comp-head"><h3>下拉选择 / 多行文本</h3><code>select.input · textarea.input</code></div>
+        <div class="comp-body">
+          <div class="state-row"><div class="state-label">下拉</div><div class="state-demo">
+            <div style="width:280px"><div class="field-label">组合上下文<span class="hint" data-tip="选择组合后，模型观点会结合该组合的现有权重给出；否则只显示独立视角。">?</span></div>
+              <select class="input"><option>稳健成长</option><option>独立模型视角</option></select></div>
+          </div></div>
+          <div class="state-row"><div class="state-label">多行</div><div class="state-demo">
+            <div style="width:420px;max-width:100%"><div class="field-label">观察池代码</div>
+              <textarea class="input" rows="3">600519, 300750, 000858</textarea>
+              <div class="field-note">用英文逗号分隔，保存后于下一交易日生效。</div></div>
+          </div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 组件：选择控件 ============ -->
+    <section class="sec" id="c3">
+      <div class="sec-head"><span class="sec-num">组件</span><h1>选择控件</h1><p>复选框用于「确认已阅读」这类需要显式同意的场景；开关用于即时生效的运行设置。</p></div>
+      <div class="comp">
+        <div class="comp-head"><h3>复选框与开关</h3><code>.check · .switch</code></div>
+        <div class="comp-body">
+          <div class="state-row"><div class="state-label">未选中</div><div class="state-demo">
+            <label class="check"><input type="checkbox"><span>我已确认此操作不会发出委托</span></label>
+          </div></div>
+          <div class="state-row"><div class="state-label">已选中</div><div class="state-demo">
+            <label class="check"><input type="checkbox" checked><span>我已确认此操作不会发出委托</span></label>
+            <span class="spec">accent-color: --brand-500</span>
+          </div></div>
+          <div class="state-row"><div class="state-label">禁用</div><div class="state-demo">
+            <label class="check is-disabled"><input type="checkbox" disabled checked><span>需先完成日线数据采集</span></label>
+          </div></div>
+          <div class="state-row"><div class="state-label">开关</div><div class="state-demo">
+            <span class="switch"><span class="switch-track"></span>暂停采集</span>
+            <span class="switch is-on"><span class="switch-track"></span>采集调度开启</span>
+            <span class="switch is-disabled"><span class="switch-track"></span>禁用态</span>
+            <span class="spec">38×22 · 滑块 16px · 位移 16px</span>
+          </div></div>
+        </div>
+        <div class="comp-foot"><table>
+          <tr><th>控件</th><th>尺寸</th><th>过渡</th><th>注意</th></tr>
+          <tr><td>复选框</td><td class="m" data-label="尺寸">15×15px，与首行文字顶部对齐</td><td class="m" data-label="过渡">浏览器原生</td><td data-label="注意">标签整块可点，不只点方框</td></tr>
+          <tr><td>开关</td><td class="m" data-label="尺寸">轨道 38×22，滑块 16px</td><td class="m" data-label="过渡">180ms cubic-bezier(.32,.72,0,1)</td><td data-label="注意">切换即时生效时需配 Toast 确认</td></tr>
+        </table></div>
+      </div>
+    </section>
+
+    <!-- ============ 组件：徽标 ============ -->
+    <section class="sec" id="c4">
+      <div class="sec-head"><span class="sec-num">组件</span><h1>徽标与标签</h1><p>同一个状态在全站必须使用同一个色板组合。形状区分职责：胶囊＝状态，方角＝属性，方向标签＝调整。</p></div>
+      <div class="comp">
+        <div class="comp-head"><h3>状态徽标</h3><code>.badge</code><p>前置 5px 圆点 + 胶囊形 + 底色。全站六种状态，不可扩展。</p></div>
+        <div class="comp-body">
+          <div class="state-row"><div class="state-label">六状态</div><div class="state-demo">
+            <span class="badge ok">正常</span><span class="badge warn">注意</span><span class="badge err">错误</span>
+            <span class="badge info">信息</span><span class="badge busy">执行中</span><span class="badge idle">未开始</span>
+          </div></div>
+          <div class="state-row"><div class="state-label">中性</div><div class="state-demo">
+            <span class="badge plain">提案 #1042</span><span class="badge plain">日线 v2026.09.21</span>
+            <span class="spec">无圆点 · --surface-3 底</span>
+          </div></div>
+          <div class="state-row"><div class="state-label">尺寸</div><div class="state-demo">
+            <span class="badge ok sm">小号</span><span class="badge ok">默认</span><span class="badge ok lg">大号</span>
+            <span class="spec">10/11/12px</span>
+          </div></div>
+        </div>
+        <div class="comp-foot"><table>
+          <tr><th>状态</th><th>文字色</th><th>底色</th><th>对比度</th><th>语义</th></tr>
+          <tr><td>正常</td><td class="m" data-label="文字色">#117e56</td><td class="m" data-label="底色">#e6f5ee</td><td class="m" data-label="对比度">4.50:1</td><td data-label="语义">已完成、已就绪、心跳正常</td></tr>
+          <tr><td>注意</td><td class="m" data-label="文字色">#a36100</td><td class="m" data-label="底色">#fff4e0</td><td class="m" data-label="对比度">4.52:1</td><td data-label="语义">覆盖不足、待验证、即将失效</td></tr>
+          <tr><td>错误</td><td class="m" data-label="文字色">#c8303c</td><td class="m" data-label="底色">#fdecee</td><td class="m" data-label="对比度">4.67:1</td><td data-label="语义">执行失败、连接断开</td></tr>
+          <tr><td>信息</td><td class="m" data-label="文字色">#2a55c8</td><td class="m" data-label="底色">#e8effc</td><td class="m" data-label="对比度">5.63:1</td><td data-label="语义">中性说明、数据口径</td></tr>
+          <tr><td>进行中</td><td class="m" data-label="文字色">#6a5ad2</td><td class="m" data-label="底色">#efecfc</td><td class="m" data-label="对比度">4.51:1</td><td data-label="语义">执行中、排队中</td></tr>
+          <tr><td>中性</td><td class="m" data-label="文字色">#5e6f88</td><td class="m" data-label="底色">#eef1f6</td><td class="m" data-label="对比度">4.52:1</td><td data-label="语义">未开始、已归档、不适用</td></tr>
+        </table></div>
+      </div>
+      <div class="comp">
+        <div class="comp-head"><h3>属性标签与方向标签</h3><code>.tag · .tag-brand · .tag-up · .tag-down</code><p>方角 4px 与胶囊徽标区分：标签表达"是什么"，徽标表达"怎么样"。</p></div>
+        <div class="comp-body">
+          <div class="state-row"><div class="state-label">属性</div><div class="state-demo">
+            <span class="tag">沪深主板</span><span class="tag">创业板</span><span class="tag">科创板</span>
+            <span class="spec">r4 · 11px · padding 2px 8px</span>
+          </div></div>
+          <div class="state-row"><div class="state-label">选中</div><div class="state-demo">
+            <span class="tag">沪深主板</span><span class="tag tag-brand">科创板</span>
+            <span class="spec">--brand-100 底 / --brand-700 字 · 8.60:1 AAA ／ 仅用于筛选器选中项</span>
+          </div></div>
+          <div class="state-row"><div class="state-label">方向</div><div class="state-demo">
+            <span class="tag tag-up">建议加仓</span><span class="tag tag-down">建议减仓</span><span class="tag">维持</span>
+            <span class="spec">复用行情色板表达调整方向</span>
+          </div></div>
+        </div>
+        <div class="comp-foot">
+          <div class="note"><b>为什么「建议加仓」不用 badge.ok：</b>它既不是"正常"也不是"注意"，塞进状态徽标会污染状态语言。方向标签复用行情色板表达"向上／向下"，与同一行的调整幅度数字颜色一致，用户扫一眼就能对上。</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 组件：表格 ============ -->
+    <section class="sec" id="c5">
+      <div class="sec-head"><span class="sec-num">组件</span><h1>数据表格</h1><p>数值列右对齐并启用 tnum。这是表格能否被"扫读"而非"逐行读"的物理基础。</p></div>
+      <div class="comp">
+        <div class="comp-head"><h3>标准表格</h3><code>.tbl</code><p>表头粘性吸顶。行高 40px 保证可点，悬停底色 --brand-50。</p></div>
+        <div class="comp-body" style="padding:20px">
+          <div class="tbl-wrap">
+            <table class="tbl">
+              <thead><tr>
+                <th class="sortable">股票代码<span class="sort">▼</span></th><th>名称</th>
+                <th class="sortable sorted">综合得分<span class="sort">▼</span></th>
+                <th class="r">当前权重</th><th class="r">建议权重</th><th class="r">调整</th><th>建议</th>
+              </tr></thead>
+              <tbody>
+                <tr><td class="mono">600519</td><td>贵州茅台</td><td class="r strong">1.842</td><td class="r">12.00%</td><td class="r strong">14.50%</td><td class="r up">+2.50%</td><td><span class="tag tag-up">建议加仓</span></td></tr>
+                <tr class="is-sel"><td class="mono">300750</td><td>宁德时代</td><td class="r strong">1.614</td><td class="r">10.00%</td><td class="r strong">12.00%</td><td class="r up">+2.00%</td><td><span class="tag tag-up">建议加仓</span></td></tr>
+                <tr><td class="mono">000858</td><td>五粮液</td><td class="r strong">0.428</td><td class="r">8.00%</td><td class="r strong">6.50%</td><td class="r down">-1.50%</td><td><span class="tag tag-down">建议减仓</span></td></tr>
+                <tr><td class="mono">601318</td><td>中国平安</td><td class="r strong">0.311</td><td class="r">7.00%</td><td class="r strong">5.50%</td><td class="r down">-1.50%</td><td><span class="tag tag-down">建议减仓</span></td></tr>
+                <tr><td class="mono">688981</td><td>中芯国际</td><td class="r strong">0.905</td><td class="r">5.00%</td><td class="r">5.00%</td><td class="r flat">0.00%</td><td><span class="tag">维持</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="spec-row">表头 h36 · 11px/500 · --ink-500 · --surface-3 底 · 首尾单元格 r8 ／ 数据行 h40 · 13px/500 · --ink-700 · 行分隔 1px --hairline ／ 悬停 --brand-50 · 选中 --brand-100</div>
+          <div class="note">第 2 行演示<b>选中态</b>（--brand-100 底）；「综合得分」列演示<b>排序态</b>（--brand-600 文字 + 箭头不透明）。</div>
+        </div>
+        <div class="comp-foot"><table>
+          <tr><th>属性</th><th>值</th></tr>
+          <tr><td>表头</td><td class="m" data-label="值">h36 · 11px/500 · letter-spacing .3px · --ink-500 · --surface-3 · 粘性吸顶</td></tr>
+          <tr><td>数据行</td><td class="m" data-label="值">h40 · 13px/500 · --ink-700 · 底部分隔线 1px --hairline</td></tr>
+          <tr><td>数值列</td><td class="m" data-label="值">text-align:right · font-variant-numeric:tabular-nums</td></tr>
+          <tr><td>涨跌列</td><td class="m" data-label="值">按符号着色：正 --quote-up · 负 --quote-down · 零 --quote-flat</td></tr>
+          <tr><td>悬停 / 选中</td><td class="m" data-label="值">--brand-50 / --brand-100</td></tr>
+          <tr><td>列数上限</td><td class="m" data-label="值">7 列；超过应拆层级或加筛选，不靠横向滚动</td></tr>
+        </table></div>
+      </div>
+    </section>
+
+    <!-- ============ 组件：卡片 ============ -->
+    <section class="sec" id="c6">
+      <div class="sec-head"><span class="sec-num">组件</span><h1>卡片与指标</h1><p>卡片靠 1px 边框与白底分离，不靠阴影。给所有卡片加阴影会让页面在浅色底上迅速变脏。</p></div>
+      <div class="comp">
+        <div class="comp-head"><h3>基础卡片与内嵌块</h3><code>.card · .card-inset</code></div>
+        <div class="comp-body" style="padding:20px">
+          <div class="grid g2">
+            <div class="card">
+              <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+                <span style="font-size:16px;font-weight:600;color:var(--ink-900)">基础卡片</span>
+                <span class="badge info">基线 v7</span>
+              </div>
+              <div style="font-size:13px;color:var(--ink-500);line-height:1.7">白底 + 1px --hairline 边框 + 12px 圆角 + 20px 内边距，无阴影。</div>
+              <div class="spec-row">background --surface-1 ／ border 1px --hairline ／ border-radius 12px ／ padding 20px ／ box-shadow none</div>
+            </div>
+            <div class="card">
+              <div style="font-size:16px;font-weight:600;color:var(--ink-900);margin-bottom:14px">内嵌块</div>
+              <div class="card-inset">
+                <div style="font-size:13px;font-weight:600;color:var(--ink-900);margin-bottom:5px">只读信息区</div>
+                <div style="font-size:12px;color:var(--ink-500);line-height:1.7">--surface-2 底、8px 圆角、16px 内边距，无边框。</div>
+              </div>
+              <div class="spec-row">background --surface-2 ／ border none ／ border-radius 8px ／ padding 16px</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="comp">
+        <div class="comp-head"><h3>指标磁贴</h3><code>.metric</code><p>四行结构固定：眉标 → 数字 → 口径 → 环比。min-height 112px 保证同行等高。</p></div>
+        <div class="comp-body" style="padding:20px">
+          <div class="grid g4">
+            <div class="metric">
+              <div class="metric-label">最近交易日</div>
+              <div class="metric-value sm">2026-09-25</div>
+              <div class="metric-foot">周五收盘 · 下一交易日 09-28</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">我的组合今日</div>
+              <div class="metric-value up">+1.24%</div>
+              <div class="metric-foot">基准 <span class="num flat">+0.82%</span> · 超额 <span class="num up">+0.42%</span></div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">有效行情<span class="hint" data-tip="以数据源时间戳校验，120 秒内更新的当日行情视为有效。">?</span></div>
+              <div class="metric-value">5,412</div>
+              <div class="metric-foot">已存 5,438 只 · 覆盖率 <span class="num">99.5%</span></div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">待办任务</div>
+              <div class="metric-value">2</div>
+              <div class="metric-foot"><span class="badge busy">1 执行中</span><span class="badge idle">1 排队</span></div>
+            </div>
+          </div>
+          <div class="spec-row">padding 18px 20px ／ min-height 112px ／ 眉标 11px/500 --ink-500 ／ 数字 26px/700 -0.5px tnum ／ 口径 12px --ink-500</div>
+        </div>
+        <div class="comp-foot"><table>
+          <tr><th>数字层级</th><th>字号 / 字重 / 字距</th><th>用途</th></tr>
+          <tr><td>metric-xl</td><td class="m" data-label="字号 / 字重 / 字距">40px / 700 / -1px</td><td data-label="用途">首屏唯一核心指标</td></tr>
+          <tr><td>metric</td><td class="m" data-label="字号 / 字重 / 字距">26px / 700 / -0.5px</td><td data-label="用途">标准指标磁贴</td></tr>
+          <tr><td>metric-sm</td><td class="m" data-label="字号 / 字重 / 字距">20px / 700 / -0.3px</td><td data-label="用途">长文本值（如日期）或次要磁贴</td></tr>
+        </table></div>
+      </div>
+      <div class="comp">
+        <div class="comp-head"><h3>主行动卡</h3><code>.hero-action</code><p>全站唯一使用深色填充的卡片，用于把"系统建议你现在做什么"推到视觉最前。</p></div>
+        <div class="comp-body" style="padding:20px">
+          <div class="hero-action">
+            <div class="hero-eyebrow">下一步建议</div>
+            <h2>采纳今天的调仓提案</h2>
+            <p>组合「稳健成长」有 <b>5 项调整</b>待你确认。提案编号 #1042，基于 2026-09-25 收盘数据生成。采纳后只生成组合版本，<b>不会发出任何委托</b>。</p>
+            <div class="hero-meta">
+              <div class="hero-meta-item"><div class="k">建议现金比例</div><div class="v">8.00%</div></div>
+              <div class="hero-meta-item"><div class="k">调整个股</div><div class="v">5 只</div></div>
+              <div class="hero-meta-item"><div class="k">有效期至</div><div class="v">今日 15:00</div></div>
+            </div>
+            <div style="display:flex;gap:10px;position:relative;flex-wrap:wrap">
+              <button class="btn btn-solid-white">查看并采纳</button>
+              <button class="btn btn-on-dark">稍后处理</button>
+            </div>
+          </div>
+          <div class="spec-row">background --navy-900 ／ border-radius 12px ／ padding 24px ／ 右上角径向渐变 rgba(53,103,214,.42) ／ 全站仅此一处深色填充卡片</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 组件：导航 ============ -->
+    <section class="sec" id="c7">
+      <div class="sec-head"><span class="sec-num">组件</span><h1>导航与页签</h1><p>选中态是实心靛蓝块，不是左侧竖条——实心块在深色底上的可扫描性远高于 2px 竖条。</p></div>
+      <div class="comp">
+        <div class="comp-head"><h3>侧边栏导航项</h3><code>.nav-item</code></div>
+        <div class="comp-body">
+          <div class="state-row"><div class="state-label">默认</div><div class="state-demo">
+            <div class="nav-demo">
+              <button class="nav-item"><span>今日概览</span></button>
+              <button class="nav-item is-active"><span>我的组合</span><span class="nav-badge">5</span></button>
+              <button class="nav-item f-hover" style="background:var(--navy-800);color:var(--nav-200)"><span>选股发现</span></button>
+              <button class="nav-item is-disabled"><span>个股研究</span></button>
+            </div>
+            <span class="spec">依次为：默认 / 选中 / 悬停 / 禁用</span>
+          </div></div>
+        </div>
+        <div class="comp-foot"><table>
+          <tr><th>状态</th><th>背景</th><th>文字</th><th>对比度</th></tr>
+          <tr><td>默认</td><td class="m" data-label="背景">transparent</td><td class="m" data-label="文字">--nav-100 #a8bcd9</td><td class="m" data-label="对比度">8.10:1</td></tr>
+          <tr><td>悬停</td><td class="m" data-label="背景">--navy-800</td><td class="m" data-label="文字">--nav-200 #dce6f5</td><td class="m" data-label="对比度">10.44:1</td></tr>
+          <tr><td>选中</td><td class="m" data-label="背景">--brand-500</td><td class="m" data-label="文字">#ffffff / 500 字重</td><td class="m" data-label="对比度">5.17:1</td></tr>
+          <tr><td>禁用</td><td class="m" data-label="背景">transparent</td><td class="m" data-label="文字">#5a6b8a</td><td class="m" data-label="对比度">—</td></tr>
+        </table>
+        <div class="note">尺寸：h36 · padding 0 12px · 圆角 8px · 图标与文字间隙 10px · 项间距 3px。分组标题 11px/500 <span class="mono">--nav-300</span>，上间距 14px。</div>
+        </div>
+      </div>
+      <div class="comp">
+        <div class="comp-head"><h3>页签 / 面包屑 / 分页</h3><code>.tab · .crumb · .pager</code></div>
+        <div class="comp-body">
+          <div class="state-row"><div class="state-label">页签</div><div class="state-demo">
+            <div style="flex:1">
+              <div class="tabs">
+                <button class="tab is-active">研究报告</button>
+                <button class="tab">因子库</button>
+                <button class="tab">验证与发布</button>
+                <button class="tab" disabled>五分钟叠加</button>
+              </div>
+              <div class="spec-row">选中：--brand-600 文字 + 2px --brand-500 下划线 ／ 未选中：--ink-500 ／ 间距 26px ／ 下划线 margin-bottom -1px 压住容器边框</div>
+            </div>
+          </div></div>
+          <div class="state-row"><div class="state-label">面包屑</div><div class="state-demo">
+            <div class="crumb"><a href="#">我的组合</a><span class="sep">/</span><a href="#">版本历史</a><span class="sep">/</span><span class="cur">v7</span></div>
+          </div></div>
+          <div class="state-row"><div class="state-label">分页</div><div class="state-demo">
+            <div class="pager">
+              <button disabled>上一页</button><button class="is-active">1</button><button>2</button><button>3</button><button>…</button><button>12</button><button>下一页</button>
+            </div>
+            <span class="spec">32×32 · r7</span>
+          </div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 组件：反馈 ============ -->
+    <section class="sec" id="c8">
+      <div class="sec-head"><span class="sec-num">组件</span><h1>反馈提示</h1><p>三种载体按严重度递进：徽标（行内）→ 横幅（页面级）→ Toast（操作结果）。</p></div>
+      <div class="comp">
+        <div class="comp-head"><h3>横幅</h3><code>.banner</code><p>横跨内容区，带图标 + 一句话说明 + 可选操作。仅「注意」与「错误」默认展开。</p></div>
+        <div class="comp-body" style="padding:20px">
+          <div class="grid" style="gap:12px">
+            <div class="banner ok"><span class="ic">✓</span><div>数据采集已完成，5,412 只股票行情已入库。</div></div>
+            <div class="banner info"><span class="ic">i</span><div>本页展示的是目标配置而非实际持仓。权重之和（含现金）必须等于 100%，系统不做自动归一化。</div></div>
+            <div class="banner warn"><span class="ic">!</span><div>行情覆盖不足或已过期。服务在线不代表行情实时有效，非交易时段也可能出现此提示。</div></div>
+            <div class="banner err"><span class="ic">×</span><div>后端连接已断开，请稍后重试。已保留的数据不代表实时行情。</div></div>
+          </div>
+          <div class="spec-row">padding 13px 16px ／ border-radius 10px ／ 13px/1.65 ／ 图标 16px 与首行基线对齐 ／ 边框与底色同色系加深</div>
+        </div>
+      </div>
+      <div class="comp">
+        <div class="comp-head"><h3>Toast 与气泡</h3><code>.toast · .hint</code></div>
+        <div class="comp-body" style="padding:20px">
+          <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:center">
+            <div class="toast-demo"><span style="color:#7fa3e8">✓</span>已采纳 5 项调整，组合版本 v8 已生成（未发出委托）</div>
+            <div style="display:flex;align-items:center;gap:6px">
+              <span style="font-size:14px;color:var(--ink-900);font-weight:500">Rank IC</span>
+              <span class="hint" data-tip="模型排名与股票未来收益的相关性。越接近 1 说明排名越准，0 附近说明没有预测力。0.05 以上通常认为有效。">?</span>
+              <span style="font-size:12px;color:var(--ink-500)">← 悬停查看气泡</span>
+            </div>
+          </div>
+          <div class="spec-row">Toast：--navy-900 底 · --shadow-xl · 右下角 24px · 2.6s 自动消失 ／ 气泡：--navy-900 底 · 最大宽 250px · 12px/1.6</div>
+        </div>
+        <div class="comp-foot">
+          <div class="note"><b>Toast 只用于"操作已提交"这类即时反馈，不承载需要用户阅读的信息。</b>需要被读到的内容用横幅；需要常驻的状态用徽标。</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 组件：浮层 ============ -->
+    <section class="sec" id="c9">
+      <div class="sec-head"><span class="sec-num">组件</span><h1>浮层</h1><p>承载 L3 明细层。原始 JSON、溯源链路一律进抽屉，不铺在主页面。</p></div>
+      <div class="comp">
+        <div class="comp-head"><h3>详情抽屉</h3><code>.drawer</code><p>宽 480px，仅左侧 1px 边框。移动端改为自底部升起的面板（高度 80vh）。</p></div>
+        <div class="comp-body" style="padding:20px">
+          <div class="drawer-demo">
+            <div class="drawer-head"><h3>溯源明细</h3><div style="margin-left:auto"><button class="btn btn-ghost btn-sm">关闭</button></div></div>
+            <div class="drawer-body">
+              <div class="json">{
+  <span class="k">"chain"</span>: [
+    {<span class="k">"step"</span>: <span class="s">"数据源"</span>,   <span class="k">"value"</span>: <span class="s">"通达信 pytdx"</span>},
+    {<span class="k">"step"</span>: <span class="s">"数据集代次"</span>, <span class="k">"value"</span>: <span class="s">"gen-20260925-a17"</span>},
+    {<span class="k">"step"</span>: <span class="s">"模型"</span>,       <span class="k">"value"</span>: <span class="s">"v2026.09.21"</span>}
+  ],
+  <span class="k">"report_id"</span>: <span class="n">1042</span>
+}</div>
+            </div>
+          </div>
+          <div class="spec-row">width 480px ／ 仅 border-left 1px --hairline ／ --shadow-xl ／ 位移过渡 240ms cubic-bezier(.32,.72,0,1) ／ 遮罩 rgba(12,24,46,.42) + backdrop-filter blur(2px)</div>
+        </div>
+        <div class="comp-foot">
+          <div class="note"><b>Streamlit 无原生抽屉组件。</b>落地时降级为 <span class="mono">st.dialog</span>（模态）或全宽 <span class="mono">st.expander</span>；若必须保留抽屉效果需自定义组件。</div>
+        </div>
+      </div>
+      <div class="comp">
+        <div class="comp-head"><h3>命令面板与确认对话框</h3><code>.palette · .dialog</code></div>
+        <div class="comp-body" style="padding:20px">
+          <div class="grid g2">
+            <div class="palette-demo">
+              <input class="palette-input" placeholder="搜索工作空间、股票或操作…" value="模型">
+              <div style="border-top:1px solid var(--hairline);padding-top:6px">
+                <div style="font-size:11px;font-weight:500;color:var(--ink-500);padding:9px 12px 5px">工作空间</div>
+                <div class="palette-item is-sel"><span>模型与报告</span><span class="pi-k">跳转</span></div>
+                <div class="palette-item"><span>训练候选模型</span><span class="pi-k">执行</span></div>
+              </div>
+            </div>
+            <div class="dialog-demo">
+              <div style="font-size:17px;font-weight:600;color:var(--ink-900);margin-bottom:8px">采纳这 5 项调整？</div>
+              <div style="font-size:13px;color:var(--ink-500);line-height:1.7;margin-bottom:18px">此操作只生成一个新的组合版本，<b>不会发出任何委托</b>。历史版本永久保留。</div>
+              <div style="display:flex;gap:10px;justify-content:flex-end">
+                <button class="btn btn-secondary">取消</button>
+                <button class="btn btn-primary">确认采纳</button>
+              </div>
+            </div>
+          </div>
+          <div class="spec-row">命令面板：max-width 560px ／ max-height 52vh ／ r12 ／ --shadow-xl ／ 顶部 14vh ／ 条目 r8 · 悬停 --brand-50</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 组件：引导 ============ -->
+    <section class="sec" id="c10">
+      <div class="sec-head"><span class="sec-num">组件</span><h1>引导与进度</h1><p>空状态与首启动引导必须给出"下一步做什么"，而不是一句"暂无数据"。</p></div>
+      <div class="comp">
+        <div class="comp-head"><h3>新手引导步骤</h3><code>.step</code><p>已完成的步骤整行降透明度至 .55，当前步骤显示主按钮。</p></div>
+        <div class="comp-body" style="padding:20px">
+          <div class="card">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+              <span style="font-size:16px;font-weight:600;color:var(--ink-900)">开始使用</span>
+              <div style="margin-left:auto;display:flex;align-items:center;gap:10px">
+                <div class="progress" style="width:110px"><span style="width:50%"></span></div>
+                <span class="num" style="font-size:12px;font-weight:600;color:var(--ink-500)">已完成 2 / 4</span>
+              </div>
+            </div>
+            <div class="step is-done"><div class="step-dot done">✓</div><div class="step-body"><div class="step-title">采集行情数据</div><div class="step-desc">已入库 5,412 只股票的日线行情，覆盖最近 250 个交易日</div></div><span class="badge ok">已完成</span></div>
+            <div class="step is-done"><div class="step-dot done">✓</div><div class="step-body"><div class="step-title">生成量化报告</div><div class="step-desc">Qlib 模型已完成今日推理，产出 1 份日线提案</div></div><span class="badge ok">已完成</span></div>
+            <div class="step"><div class="step-dot now">3</div><div class="step-body"><div class="step-title">建立我的组合</div><div class="step-desc">设定你想观察的股票和权重，系统会据此生成调仓建议</div></div><button class="btn btn-primary btn-sm">去建立</button></div>
+            <div class="step"><div class="step-dot todo">4</div><div class="step-body"><div class="step-title">查看选股结果</div><div class="step-desc">按模型综合得分排名的候选股票清单</div></div><button class="btn btn-secondary btn-sm">去看看</button></div>
+          </div>
+          <div class="spec-row">状态圆点 22px ／ 已完成 --state-ok 实心带对勾 ／ 进行中 --brand-500 描边空心 ／ 未开始 --surface-3 实心 ／ 行间距 13px ／ 分隔线 1px --hairline</div>
+        </div>
+      </div>
+      <div class="comp">
+        <div class="comp-head"><h3>进度条</h3><code>.progress · .track</code></div>
+        <div class="comp-body" style="padding:20px">
+          <div style="display:flex;flex-direction:column;gap:14px;max-width:420px">
+            <div><div style="font-size:12px;color:var(--ink-500);margin-bottom:6px">引导进度 50%</div><div class="progress"><span style="width:50%"></span></div></div>
+            <div><div style="font-size:12px;color:var(--ink-500);margin-bottom:6px">任务进度 62%</div><div class="progress"><span style="width:62%"></span></div></div>
+            <div><div style="font-size:12px;color:var(--ink-500);margin-bottom:6px">有效覆盖 99.2%（板块卡内，4px 细轨）</div>              <div class="track"><span style="width:99.2%;background:var(--brand-500)"></span></div></div>
+          </div>
+          <div class="spec-row">引导进度：h5 · r3 · --surface-3 轨 ／ 覆盖度：h4 · r3 · 与进度条同用 --brand-500 ／ 过渡 240ms cubic-bezier(.32,.72,0,1)</div>
+          <div class="note">覆盖度是数据质量指标，不是涨跌量，因此不套行情色。覆盖不足时改由相邻的 <span class="badge warn">注意</span> 徽标提示，不给进度条换色——进度条的颜色不承载状态。</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 组件：图表 ============ -->
+    <section class="sec" id="c11">
+      <div class="sec-head"><span class="sec-num">组件</span><h1>图表</h1><p>图表是数据可视化的延续，颜色规则与表格一致：涨跌用行情色，统计量用中性色。</p></div>
+      <div class="comp">
+        <div class="comp-head"><h3>分时折线</h3><code>价格走势</code><p>线色跟随区间涨跌方向；填充用同色 16% 透明渐变。</p></div>
+        <div class="comp-body" style="padding:20px">
+          <svg class="chart" viewBox="0 0 900 180" height="180" preserveAspectRatio="none" style="width:100%;display:block">
+            <defs><linearGradient id="gup" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#d32935" stop-opacity=".16"/><stop offset="100%" stop-color="#d32935" stop-opacity="0"/>
+            </linearGradient></defs>
+            <line x1="0" y1="45" x2="900" y2="45" stroke="#e3e9f3" stroke-width="1"/>
+            <line x1="0" y1="90" x2="900" y2="90" stroke="#e3e9f3" stroke-width="1"/>
+            <line x1="0" y1="135" x2="900" y2="135" stroke="#e3e9f3" stroke-width="1"/>
+            <path d="M0,135 L60,128 L120,140 L180,124 L240,108 L300,116 L360,94 L420,101 L480,79 L540,87 L600,65 L660,72 L720,52 L780,60 L840,36 L900,27 L900,180 L0,180 Z" fill="url(#gup)"/>
+            <path d="M0,135 L60,128 L120,140 L180,124 L240,108 L300,116 L360,94 L420,101 L480,79 L540,87 L600,65 L660,72 L720,52 L780,60 L840,36 L900,27" fill="none" stroke="#d32935" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+          </svg>
+          <div class="spec-row">线宽 2px ／ 圆角连接 ／ 网格线 1px --hairline ／ 填充同色 16%→0 纵向渐变</div>
+        </div>
+      </div>
+      <div class="comp">
+        <div class="comp-head"><h3>五分位柱状图</h3><code>零轴基准</code><p><b>负值必须落在零轴下方。</b>让负柱向上生长会被误读为正向贡献。</p></div>
+        <div class="comp-body" style="padding:20px">
+          <div class="qbars" style="position:relative;display:flex;gap:20px;height:200px;margin-bottom:30px">
+            <div style="position:absolute;left:0;right:0;top:50%;border-top:1px dashed var(--hairline-strong)"></div>
+            <div style="flex:1;position:relative"><div style="position:absolute;left:50%;transform:translateX(-50%);bottom:50%;width:100%;max-width:56px;height:50%;background:var(--quote-up);border-radius:6px 6px 2px 2px"><span class="num up" style="position:absolute;left:50%;transform:translateX(-50%);bottom:100%;margin-bottom:7px;font-size:12px;font-weight:600;white-space:nowrap">+1.24%</span></div><span style="position:absolute;left:0;right:0;bottom:-26px;text-align:center;font-size:11px;color:var(--ink-500)">Q1 最高</span></div>
+            <div style="flex:1;position:relative"><div style="position:absolute;left:50%;transform:translateX(-50%);bottom:50%;width:100%;max-width:56px;height:28.5%;background:var(--quote-up);border-radius:6px 6px 2px 2px"><span class="num up" style="position:absolute;left:50%;transform:translateX(-50%);bottom:100%;margin-bottom:7px;font-size:12px;font-weight:600;white-space:nowrap">+0.71%</span></div><span style="position:absolute;left:0;right:0;bottom:-26px;text-align:center;font-size:11px;color:var(--ink-500)">Q2</span></div>
+            <div style="flex:1;position:relative"><div style="position:absolute;left:50%;transform:translateX(-50%);bottom:50%;width:100%;max-width:56px;height:7.5%;background:var(--quote-up);border-radius:6px 6px 2px 2px"><span class="num up" style="position:absolute;left:50%;transform:translateX(-50%);bottom:100%;margin-bottom:7px;font-size:12px;font-weight:600;white-space:nowrap">+0.18%</span></div><span style="position:absolute;left:0;right:0;bottom:-26px;text-align:center;font-size:11px;color:var(--ink-500)">Q3</span></div>
+            <div style="flex:1;position:relative"><div style="position:absolute;left:50%;transform:translateX(-50%);top:50%;width:100%;max-width:56px;height:17%;background:var(--quote-down);border-radius:2px 2px 6px 6px"><span class="num down" style="position:absolute;left:50%;transform:translateX(-50%);top:100%;margin-top:7px;font-size:12px;font-weight:600;white-space:nowrap">-0.42%</span></div><span style="position:absolute;left:0;right:0;bottom:-26px;text-align:center;font-size:11px;color:var(--ink-500)">Q4</span></div>
+            <div style="flex:1;position:relative"><div style="position:absolute;left:50%;transform:translateX(-50%);top:50%;width:100%;max-width:56px;height:38.5%;background:var(--quote-down);border-radius:2px 2px 6px 6px"><span class="num down" style="position:absolute;left:50%;transform:translateX(-50%);top:100%;margin-top:7px;font-size:12px;font-weight:600;white-space:nowrap">-0.96%</span></div><span style="position:absolute;left:0;right:0;bottom:-26px;text-align:center;font-size:11px;color:var(--ink-500)">Q5 最低</span></div>
+          </div>
+          <div class="spec-row">正柱 --quote-up 向上生长 ／ 负柱 --quote-down 向下生长 ／ 零轴 1px 虚线 --hairline-strong ／ 柱宽上限 56px ／ 柱间距 20px ／ 数值标签在柱外端</div>
+          <div class="note">柱高按绝对值的最大值归一化（此处 max |1.24%| = 50% 容器高）。</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 组件：状态页 ============ -->
+    <section class="sec" id="c12">
+      <div class="sec-head"><span class="sec-num">组件</span><h1>状态页</h1><p>空状态 = 一句话说明"为什么还没有数据" + 一个可点的操作。</p></div>
+      <div class="comp">
+        <div class="comp-head"><h3>空状态 / 加载中 / 无权限</h3><code>.empty · .skel</code></div>
+        <div class="comp-body" style="padding:20px">
+          <div class="grid g2" style="margin-bottom:20px">
+            <div class="empty">
+              <div class="empty-ic">◷</div>
+              <strong>尚无量化分析报告</strong>
+              <p>日线数据就绪后，系统会自动排队生成报告。也可以手动提交一次。</p>
+              <button class="btn btn-primary btn-sm">立即生成报告</button>
+            </div>
+            <div class="empty" style="border-style:solid;background:var(--surface-1)">
+              <div class="empty-ic" style="background:var(--state-error-bg);color:var(--state-error)">!</div>
+              <strong>没有访问权限</strong>
+              <p>当前令牌只能访问研究工作台，模型发布需要操作员权限。请联系部署管理员。</p>
+              <button class="btn btn-secondary btn-sm">返回今日概览</button>
+            </div>
+          </div>
+          <div class="card" style="background:var(--surface-1)">
+            <div style="font-size:12px;color:var(--ink-500);margin-bottom:12px">加载中（骨架屏）</div>
+            <div class="skel-row"><div class="skel" style="width:88px;height:14px"></div><div class="skel" style="width:120px;height:14px"></div><div class="skel" style="flex:1;height:14px"></div><div class="skel" style="width:64px;height:14px"></div></div>
+            <div class="skel-row"><div class="skel" style="width:88px;height:14px"></div><div class="skel" style="width:104px;height:14px"></div><div class="skel" style="flex:1;height:14px"></div><div class="skel" style="width:64px;height:14px"></div></div>
+            <div class="skel-row"><div class="skel" style="width:88px;height:14px"></div><div class="skel" style="width:136px;height:14px"></div><div class="skel" style="flex:1;height:14px"></div><div class="skel" style="width:64px;height:14px"></div></div>
+          </div>
+          <div class="spec-row">空状态：虚线 1px --hairline-strong · r12 · --surface-2 底 · padding 38px 20px ／ 图标块 44×44 r12 ／ 骨架：--surface-3 → #e6ebf4 微光扫过 1.4s 循环</div>
+        </div>
+        <div class="comp-foot">
+          <div class="note">骨架屏的条目数应与真实内容量接近，避免加载完成后布局大幅跳动。表格骨架保留与真实表头等宽的占位块。</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 6 动效 ============ -->
+    <section class="sec" id="s6">
+      <div class="sec-head"><span class="sec-num">06</span><h1>动效参数</h1><p>动效只服务于状态变化的可感知性，不做装饰。全部遵守 prefers-reduced-motion。</p></div>
+      <div class="card">
+        <div class="tbl-wrap plain">
+          <table class="tbl" style="font-size:13px">
+            <thead><tr><th>场景</th><th>属性</th><th>时长</th><th>缓动</th></tr></thead>
+            <tbody>
+              <tr><td>按钮 / 输入框 / 导航项状态变化</td><td class="mono">background, border-color, color</td><td class="mono">120ms</td><td class="mono">ease-in-out</td></tr>
+              <tr><td>开关切换</td><td class="mono">background, transform</td><td class="mono">180ms</td><td class="mono">cubic-bezier(.32,.72,0,1)</td></tr>
+              <tr><td>页签下划线</td><td class="mono">color, border-color</td><td class="mono">120ms</td><td class="mono">ease-in-out</td></tr>
+              <tr><td>抽屉滑入 / 滑出</td><td class="mono">transform: translateX</td><td class="mono">240ms</td><td class="mono">cubic-bezier(.32,.72,0,1)</td></tr>
+              <tr><td>遮罩淡入</td><td class="mono">opacity</td><td class="mono">180ms</td><td class="mono">ease</td></tr>
+              <tr><td>命令面板出现</td><td class="mono">opacity, transform: scale(.97→1)</td><td class="mono">180ms</td><td class="mono">ease-out</td></tr>
+              <tr><td>页面切换</td><td class="mono">opacity, translateY(4px→0)</td><td class="mono">220ms</td><td class="mono">ease</td></tr>
+              <tr><td>进度条推进</td><td class="mono">width</td><td class="mono">240ms</td><td class="mono">cubic-bezier(.32,.72,0,1)</td></tr>
+              <tr><td>骨架屏微光</td><td class="mono">background-position</td><td class="mono">1400ms 循环</td><td class="mono">ease</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="card" style="margin-top:16px">
+        <h2 class="blk">降级规则</h2>
+        <div class="mono" style="font-size:12px;color:var(--ink-700);background:var(--surface-2);padding:14px;border-radius:8px;line-height:1.8">
+@media (prefers-reduced-motion: reduce) {<br>
+&nbsp;&nbsp;*, *::before, *::after {<br>
+&nbsp;&nbsp;&nbsp;&nbsp;animation-duration: .01ms !important;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;transition-duration: .01ms !important;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;scroll-behavior: auto !important;<br>
+&nbsp;&nbsp;}<br>
+}
+        </div>
+        <div class="note">骨架屏微光动画在降级后应替换为静态 --surface-3 色块，而不是消失（消失会让用户以为加载失败）。</div>
+      </div>
+    </section>
+
+    <!-- ============ 7 可访问性 ============ -->
+    <section class="sec" id="s7">
+      <div class="sec-head"><span class="sec-num">07</span><h1>可访问性审计</h1><p>41 组前景／背景配对全部通过 WCAG 2.1 AA。下表为实测值，非估算。</p></div>
+      <div class="card">
+        <div class="grid g4" style="margin-bottom:20px">
+          <div class="card-inset"><div style="font-size:12px;color:var(--ink-500)">审计配对</div><div class="num" style="font-size:26px;font-weight:700;color:var(--state-ok)">41 / 41</div><div style="font-size:12px;color:var(--ink-500)">全部通过</div></div>
+          <div class="card-inset"><div style="font-size:12px;color:var(--ink-500)">AAA 级（≥7:1）</div><div class="num" style="font-size:26px;font-weight:700;color:var(--ink-900)">16</div><div style="font-size:12px;color:var(--ink-500)">标题、正文与选中态</div></div>
+          <div class="card-inset"><div style="font-size:12px;color:var(--ink-500)">最低比值</div><div class="num" style="font-size:26px;font-weight:700;color:var(--ink-900)">4.50:1</div><div style="font-size:12px;color:var(--ink-500)">状态徽标（贴线达标）</div></div>
+          <div class="card-inset"><div style="font-size:12px;color:var(--ink-500)">修正项</div><div class="num" style="font-size:26px;font-weight:700;color:var(--state-warn)">10</div><div style="font-size:12px;color:var(--ink-500)">首版配色不达标</div></div>
+        </div>
+        <div class="tbl-wrap">
+          <table class="tbl">
+            <thead><tr><th>前景</th><th>背景</th><th class="r">实测比值</th><th>等级</th><th>用途</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">--ink-900</td><td class="mono">--surface-1</td><td class="r strong">17.04:1</td><td><span class="badge ok">AAA</span></td><td>页面主标题 / 指标数字</td></tr>
+              <tr><td class="mono">--ink-900</td><td class="mono">--canvas</td><td class="r strong">15.89:1</td><td><span class="badge ok">AAA</span></td><td>主标题（页面底）</td></tr>
+              <tr><td class="mono">--ink-700</td><td class="mono">--surface-1</td><td class="r strong">11.13:1</td><td><span class="badge ok">AAA</span></td><td>正文 / 表格单元格</td></tr>
+              <tr><td class="mono">--ink-700</td><td class="mono">--canvas</td><td class="r strong">10.38:1</td><td><span class="badge ok">AAA</span></td><td>正文（页面底）</td></tr>
+              <tr><td class="mono">--ink-700</td><td class="mono">--surface-2</td><td class="r strong">10.84:1</td><td><span class="badge ok">AAA</span></td><td>内嵌块正文</td></tr>
+              <tr><td class="mono">--ink-700</td><td class="mono">--surface-3</td><td class="r strong">9.91:1</td><td><span class="badge ok">AAA</span></td><td>表格行（表头底）</td></tr>
+              <tr><td class="mono">--ink-900</td><td class="mono">--surface-3</td><td class="r strong">15.16:1</td><td><span class="badge ok">AAA</span></td><td>深色表头文字</td></tr>
+              <tr><td class="mono">--brand-700</td><td class="mono">--surface-1</td><td class="r strong">10.20:1</td><td><span class="badge ok">AAA</span></td><td>深色链接</td></tr>
+              <tr><td class="mono">--ink-500</td><td class="mono">--surface-1</td><td class="r">5.34:1</td><td><span class="badge info">AA</span></td><td>次级说明 / 时间戳 / 占位符</td></tr>
+              <tr><td class="mono">--ink-500</td><td class="mono">--canvas</td><td class="r">4.98:1</td><td><span class="badge info">AA</span></td><td>次级说明（页面底）</td></tr>
+              <tr><td class="mono">--ink-500</td><td class="mono">--surface-2</td><td class="r">5.20:1</td><td><span class="badge info">AA</span></td><td>次级说明（内嵌块）</td></tr>
+              <tr><td class="mono">--ink-500</td><td class="mono">--surface-3</td><td class="r">4.75:1</td><td><span class="badge info">AA</span></td><td>表格表头文字</td></tr>
+              <tr><td class="mono">#ffffff</td><td class="mono">--brand-500</td><td class="r">5.17:1</td><td><span class="badge info">AA</span></td><td>主按钮文字</td></tr>
+              <tr><td class="mono">--brand-500</td><td class="mono">--surface-1</td><td class="r">5.17:1</td><td><span class="badge info">AA</span></td><td>链接 / 聚焦环</td></tr>
+              <tr><td class="mono">--brand-600</td><td class="mono">--surface-1</td><td class="r">6.50:1</td><td><span class="badge info">AA</span></td><td>链接 hover</td></tr>
+              <tr><td class="mono">--quote-up</td><td class="mono">--surface-1</td><td class="r">5.07:1</td><td><span class="badge info">AA</span></td><td>涨（红）数字</td></tr>
+              <tr><td class="mono">--quote-up</td><td class="mono">--canvas</td><td class="r">4.73:1</td><td><span class="badge info">AA</span></td><td>涨（红）数字（页面底）</td></tr>
+              <tr><td class="mono">--quote-up</td><td class="mono">--quote-up-bg</td><td class="r">4.51:1</td><td><span class="badge info">AA</span></td><td>涨方向标签</td></tr>
+              <tr><td class="mono">--quote-down</td><td class="mono">--surface-1</td><td class="r">4.98:1</td><td><span class="badge info">AA</span></td><td>跌（绿）数字</td></tr>
+              <tr><td class="mono">--quote-down</td><td class="mono">--canvas</td><td class="r">4.64:1</td><td><span class="badge info">AA</span></td><td>跌（绿）数字（页面底）</td></tr>
+              <tr><td class="mono">--quote-down</td><td class="mono">--quote-down-bg</td><td class="r">4.50:1</td><td><span class="badge info">AA</span></td><td>跌方向标签</td></tr>
+              <tr><td class="mono">--state-ok</td><td class="mono">--state-ok-bg</td><td class="r">4.50:1</td><td><span class="badge info">AA</span></td><td>正常徽标</td></tr>
+              <tr><td class="mono">--state-warn</td><td class="mono">--state-warn-bg</td><td class="r">4.52:1</td><td><span class="badge info">AA</span></td><td>注意徽标</td></tr>
+              <tr><td class="mono">--state-error</td><td class="mono">--state-error-bg</td><td class="r">4.67:1</td><td><span class="badge info">AA</span></td><td>错误徽标</td></tr>
+              <tr><td class="mono">--state-info</td><td class="mono">--state-info-bg</td><td class="r">5.63:1</td><td><span class="badge info">AA</span></td><td>信息徽标</td></tr>
+              <tr><td class="mono">--state-busy</td><td class="mono">--state-busy-bg</td><td class="r">4.51:1</td><td><span class="badge info">AA</span></td><td>进行中徽标</td></tr>
+              <tr><td class="mono">--state-idle</td><td class="mono">--state-idle-bg</td><td class="r">4.52:1</td><td><span class="badge info">AA</span></td><td>中性徽标</td></tr>
+              <tr><td class="mono">--nav-100</td><td class="mono">--navy-900</td><td class="r">8.10:1</td><td><span class="badge ok">AAA</span></td><td>侧边栏未选中项</td></tr>
+              <tr><td class="mono">--nav-200</td><td class="mono">--navy-800</td><td class="r strong">10.44:1</td><td><span class="badge ok">AAA</span></td><td>侧边栏 hover</td></tr>
+              <tr><td class="mono">#ffffff</td><td class="mono">--navy-900</td><td class="r strong">15.67:1</td><td><span class="badge ok">AAA</span></td><td>侧边栏选中 / 主行动卡</td></tr>
+              <tr><td class="mono">--nav-300</td><td class="mono">--navy-900</td><td class="r">4.79:1</td><td><span class="badge info">AA</span></td><td>侧边栏脚注</td></tr>
+              <tr><td class="mono">--nav-err</td><td class="mono">--navy-900</td><td class="r">6.26:1</td><td><span class="badge info">AA</span></td><td>侧边栏判决标记 · 受阻（✕ + 文字）</td></tr>
+              <tr><td class="mono">--nav-ok</td><td class="mono">--navy-900</td><td class="r">7.59:1</td><td><span class="badge ok">AAA</span></td><td>侧边栏判决标记 · 就绪（✓ + 文字）</td></tr>
+<tr><td class="mono">--brand-700</td><td class="mono">--brand-100</td><td class="r strong">8.60:1</td><td><span class="badge ok">AAA</span></td><td>选中标签（tag-brand）</td></tr>
+<tr><td class="mono">--brand-700</td><td class="mono">--brand-50</td><td class="r strong">9.41:1</td><td><span class="badge ok">AAA</span></td><td>命令面板选中项</td></tr>
+<tr><td class="mono">--brand-600</td><td class="mono">--brand-50</td><td class="r">6.00:1</td><td><span class="badge info">AA</span></td><td>目录选中文字</td></tr>
+<tr><td class="mono">--ink-700</td><td class="mono">--brand-50</td><td class="r strong">10.27:1</td><td><span class="badge ok">AAA</span></td><td>表格行 hover 文字</td></tr>
+<tr><td class="mono">--ink-700</td><td class="mono">--brand-100</td><td class="r strong">9.38:1</td><td><span class="badge ok">AAA</span></td><td>表格行选中文字</td></tr>
+<tr><td class="mono">--state-ok</td><td class="mono">--surface-1</td><td class="r">5.07:1</td><td><span class="badge info">AA</span></td><td>通过标记（.pass）</td></tr>
+<tr><td class="mono">--state-error</td><td class="mono">--surface-1</td><td class="r">5.32:1</td><td><span class="badge info">AA</span></td><td>表单错误文字 / 失败标记</td></tr>
+<tr><td class="mono">--ink-900</td><td class="mono">--surface-2</td><td class="r strong">16.60:1</td><td><span class="badge ok">AAA</span></td><td>内嵌块标题</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <h2 class="blk">首版不达标的 10 组（已全部修正）</h2>
+      <div class="card">
+        <div class="tbl-wrap plain">
+          <table class="tbl" style="font-size:13px">
+            <thead><tr><th>配对</th><th class="r">修正前</th><th class="r">修正后</th><th>处理方式</th></tr></thead>
+            <tbody>
+              <tr><td>时间戳灰 on 白底</td><td class="r fail">3.05:1</td><td class="r pass">5.34:1</td><td>灰阶重构：原四级灰最浅两级无法同时达标，收敛为三级</td></tr>
+              <tr><td>时间戳灰 on 页面底</td><td class="r fail">2.84:1</td><td class="r pass">4.98:1</td><td>同上</td></tr>
+              <tr><td>占位符灰 on 白底</td><td class="r fail">2.05:1</td><td class="r pass">5.34:1</td><td>占位符改用 --ink-500</td></tr>
+              <tr><td>跌（绿）on 白底</td><td class="r fail">3.49:1</td><td class="r pass">4.98:1</td><td>保持色相，压暗亮度 #0f9d63 → #0c8050</td></tr>
+              <tr><td>涨标签 on 涨底色</td><td class="r fail">4.02:1</td><td class="r pass">4.51:1</td><td>#d93a45 → #d32935</td></tr>
+              <tr><td>跌标签 on 跌底色</td><td class="r fail">3.15:1</td><td class="r pass">4.50:1</td><td>#0f9d63 → #0c8050</td></tr>
+              <tr><td>正常徽标</td><td class="r fail">4.12:1</td><td class="r pass">4.50:1</td><td>#12855a → #117e56</td></tr>
+              <tr><td>注意徽标</td><td class="r fail">3.89:1</td><td class="r pass">4.52:1</td><td>#b26a00 → #a36100</td></tr>
+              <tr><td>进行中徽标</td><td class="r fail">4.46:1</td><td class="r pass">4.51:1</td><td>#6b5bd2 → #6a5ad2</td></tr>
+              <tr><td>中性徽标</td><td class="r fail">2.69:1</td><td class="r pass">4.52:1</td><td>#8595ab → #5e6f88</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="note">修正方式统一为「保持色相角不变，仅降低亮度至刚好达标」，因此红仍是红、绿仍是绿，视觉识别性未受影响。灰阶则做了结构性收敛——五级文字灰里最浅的两级在数学上无法同时满足 4.5:1。</div>
+      </div>
+
+      <h2 class="blk">键盘与触摸</h2>
+      <div class="grid g2">
+        <div class="card">
+          <div class="tbl-wrap plain">
+            <table class="tbl" style="font-size:13px">
+              <thead><tr><th>项目</th><th>规格</th></tr></thead>
+              <tbody>
+                <tr><td>聚焦可见</td><td>3px rgba(53,103,214,.22) 外环，仅 :focus-visible</td></tr>
+                <tr><td>Tab 顺序</td><td>侧边栏 → 顶栏 → 主内容，与视觉顺序一致</td></tr>
+                <tr><td>抽屉焦点</td><td>打开时焦点移入抽屉首元素，关闭后归还触发按钮</td></tr>
+                <tr><td>命令面板</td><td>↑↓ 移动选中、Enter 执行、Esc 关闭，输入框自动聚焦</td></tr>
+                <tr><td>表格行</td><td>可点行使用 &lt;button&gt; 或 role="row" + tabindex，不用纯 div</td></tr>
+                <tr><td>跳过导航</td><td>首元素提供「跳到主内容」链接</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="card">
+          <div class="tbl-wrap plain">
+            <table class="tbl" style="font-size:13px">
+              <thead><tr><th>触摸目标</th><th class="r">桌面</th><th class="r">触摸设备</th></tr></thead>
+              <tbody>
+                <tr><td>主 / 次按钮</td><td class="r">36px</td><td class="r">44px</td></tr>
+                <tr><td>文字按钮</td><td class="r">32px</td><td class="r">44px</td></tr>
+                <tr><td>导航项</td><td class="r">36px</td><td class="r">44px</td></tr>
+                <tr><td>表格行</td><td class="r">40px</td><td class="r">48px</td></tr>
+                <tr><td>分页按钮</td><td class="r">32×32px</td><td class="r">44×44px</td></tr>
+                <tr><td>复选框</td><td class="r">15px（标签整块可点）</td><td class="r">标签整块 ≥44px</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      <div class="note"><b>不使用颜色作为唯一区分手段。</b>状态徽标同时有文字与圆点，错误提示同时有 ✕ 图标与文字，涨跌同时有正负号——色觉障碍用户不依赖颜色也能读出信息。</div>
+    </section>
+
+    <!-- ============ 8 开发交付 ============ -->
+    <section class="sec" id="s8">
+      <div class="sec-head"><span class="sec-num">08</span><h1>开发交付</h1><p>落地顺序按风险从低到高排列。P0 是纯字符串替换，收益最大。</p></div>
+      <div class="card">
+        <h2 class="blk">Streamlit 组件映射</h2>
+        <div class="tbl-wrap plain">
+          <table class="tbl">
+            <thead><tr><th>设计组件</th><th>Streamlit 实现</th><th>落地注意</th></tr></thead>
+            <tbody>
+              <tr><td>卡片 / 内嵌块</td><td class="mono">st.container(border=True)</td><td>需 CSS 覆写边框色与圆角</td></tr>
+              <tr><td>指标磁贴</td><td class="mono">st.metric</td><td>覆写 <span class="mono">[data-testid="stMetric"]</span>，补口径行</td></tr>
+              <tr><td>按钮</td><td class="mono">st.button(type="primary")</td><td>主按钮每视口仅一个</td></tr>
+              <tr><td>表格</td><td class="mono">st.dataframe</td><td>数值列用 column_config 右对齐；涨跌色需 HTML 表格</td></tr>
+              <tr><td>状态徽标</td><td class="mono">st.markdown(unsafe_allow_html)</td><td>无原生组件</td></tr>
+              <tr><td>横幅</td><td class="mono">st.warning / st.error / st.info</td><td>覆写语义色到本规范色板</td></tr>
+              <tr><td>详情抽屉</td><td class="mono">st.dialog</td><td><b>无原生抽屉</b>，降级为模态或 expander</td></tr>
+              <tr><td>命令面板</td><td class="mono">st.dialog + st.text_input</td><td>快捷键需前端 hack，可降级为顶栏搜索</td></tr>
+              <tr><td>引导步骤</td><td class="mono">st.markdown(unsafe_allow_html)</td><td>含状态圆点与进度条</td></tr>
+              <tr><td>Toast</td><td class="mono">st.toast</td><td>仅用于"操作已提交"类反馈</td></tr>
+              <tr><td>骨架屏</td><td class="mono">st.spinner / 占位</td><td>Streamlit 无骨架组件</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="card" style="margin-top:16px">
+        <h2 class="blk">落地优先级</h2>
+        <div class="step"><div class="step-dot done">P0</div><div class="step-body"><div class="step-title">文案全量中文化</div><div class="step-desc">风险极低（纯字符串）。7 个工作空间名称与描述、全部按钮／标签／表头／空状态。收益最大。</div></div></div>
+        <div class="step"><div class="step-dot done">P1</div><div class="step-body"><div class="step-title">状态语言统一</div><div class="step-desc">六状态色板 + 三载体。顶栏收敛为一行徽标，不再在页面主体重复展示。</div></div></div>
+        <div class="step"><div class="step-dot now">P2</div><div class="step-body"><div class="step-title">信息密度收敛</div><div class="step-desc">L3 明细（原始 JSON、溯源链路）全部移出主页面；空状态补「下一步」操作。</div></div></div>
+        <div class="step"><div class="step-dot todo">P3</div><div class="step-body"><div class="step-title">令牌落地</div><div class="step-desc">把本页 :root 令牌注入 Streamlit 自定义 CSS，替换所有硬编码色值。</div></div></div>
+        <div class="step"><div class="step-dot todo">P4</div><div class="step-body"><div class="step-title">可访问性回归</div><div class="step-desc">实现后重新跑一遍 41 组对比度审计，确认覆写未引入新的不达标配对；七个断点横向溢出须为 0。</div></div></div>
+      </div>
+      <div class="card" style="margin-top:16px">
+        <h2 class="blk">设计 QA 检查清单</h2>
+        <div class="note" style="margin:0 0 14px">与 <span class="mono">docs/UI-DESIGN.md</span> §10 一致。每个界面提交评审前逐条自检。</div>
+        <div class="grid g2">
+          <div class="card-inset">
+            <div style="font-size:12px;font-weight:600;color:var(--ink-900);margin-bottom:10px">配色</div>
+            <label class="check" style="display:flex;margin-bottom:9px"><input type="checkbox" checked><span>涨是红、跌是绿，未被反转</span></label>
+            <label class="check" style="display:flex;margin-bottom:9px"><input type="checkbox" checked><span>非涨跌量（得分、IC、动量、覆盖率、达标率）未上行情色</span></label>
+            <label class="check" style="display:flex;margin-bottom:9px"><input type="checkbox" checked><span>通过 / 失败用状态色，未用涨跌色</span></label>
+            <label class="check" style="display:flex;margin-bottom:9px"><input type="checkbox" checked><span>每视口最多一个主按钮</span></label>
+            <label class="check" style="display:flex;margin-bottom:9px"><input type="checkbox" checked><span>新增色值已通过对比度审计并写进审计表</span></label>
+            <label class="check" style="display:flex"><input type="checkbox" checked><span>状态未被颜色单独承载</span></label>
+          </div>
+          <div class="card-inset">
+            <div style="font-size:12px;font-weight:600;color:var(--ink-900);margin-bottom:10px">排版与数据</div>
+            <label class="check" style="display:flex;margin-bottom:9px"><input type="checkbox" checked><span>所有数字启用 tnum，数值列右对齐</span></label>
+            <label class="check" style="display:flex;margin-bottom:9px"><input type="checkbox" checked><span>界面文案无英文残留；代码标识符只在明细层且等宽</span></label>
+            <label class="check" style="display:flex"><input type="checkbox" checked><span>正文 14px、表格 13px、字号下限 12px</span></label>
+          </div>
+          <div class="card-inset">
+            <div style="font-size:12px;font-weight:600;color:var(--ink-900);margin-bottom:10px">结构与层级</div>
+            <label class="check" style="display:flex;margin-bottom:9px"><input type="checkbox" checked><span>卡片用边框，只有浮层用阴影</span></label>
+            <label class="check" style="display:flex;margin-bottom:9px"><input type="checkbox" checked><span>L3 明细未铺在主页面</span></label>
+            <label class="check" style="display:flex"><input type="checkbox" checked><span>z-index 取自固定阶梯，未插入新值</span></label>
+          </div>
+          <div class="card-inset">
+            <div style="font-size:12px;font-weight:600;color:var(--ink-900);margin-bottom:10px">交互与可访问性</div>
+            <label class="check" style="display:flex;margin-bottom:9px"><input type="checkbox" checked><span>每个输入框有常驻可见标签（不用占位符当标签）</span></label>
+            <label class="check" style="display:flex;margin-bottom:9px"><input type="checkbox" checked><span>空状态给出了下一步操作，而不是「暂无数据」</span></label>
+            <label class="check" style="display:flex;margin-bottom:9px"><input type="checkbox" checked><span>全部交互态齐备：默认 / 悬停 / 按下 / 聚焦 / 禁用</span></label>
+            <label class="check" style="display:flex;margin-bottom:9px"><input type="checkbox" checked><span>加载态未改变控件尺寸</span></label>
+            <label class="check" style="display:flex;margin-bottom:9px"><input type="checkbox" checked><span>触摸目标 ≥44px</span></label>
+            <label class="check" style="display:flex"><input type="checkbox" checked><span>七个断点横向溢出为 0</span></label>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var $ = function(s){ return document.querySelector(s); };
+  var $$ = function(s){ return Array.prototype.slice.call(document.querySelectorAll(s)); };
+
+  /* 尺寸标注开关 */
+  var specBtn = $("#specToggle");
+  specBtn.addEventListener("click", function(){
+    var on = specBtn.getAttribute("aria-pressed") === "true";
+    specBtn.setAttribute("aria-pressed", on ? "false" : "true");
+    document.body.classList.toggle("show-spec", !on);
+  });
+
+  /* 键盘焦点演示：给所有可聚焦控件强制显示聚焦环 */
+  var focusBtn = $("#focusToggle");
+  focusBtn.addEventListener("click", function(){
+    var on = focusBtn.getAttribute("aria-pressed") === "true";
+    focusBtn.setAttribute("aria-pressed", on ? "false" : "true");
+    $$(".btn, .input, .tab, .pager button, .nav-item, .palette-item, .switch").forEach(function(el){
+      el.classList.toggle("f-focus", !on);
+    });
+  });
+
+  /* 目录 scrollspy */
+  var links = $$(".toc a");
+  var targets = links.map(function(a){ return document.querySelector(a.getAttribute("href")); }).filter(Boolean);
+  function spy(){
+    var y = window.scrollY + 120, cur = null;
+    targets.forEach(function(t){ if (t.offsetTop <= y) cur = t.id; });
+    links.forEach(function(a){ a.classList.toggle("is-cur", a.getAttribute("href") === "#" + cur); });
+  }
+  window.addEventListener("scroll", spy, { passive: true });
+  spy();
+
+  /* 页签演示可点击 */
+  $$(".tab").forEach(function(t){
+    t.addEventListener("click", function(){
+      if (t.disabled) return;
+      var bar = t.parentElement;
+      bar.querySelectorAll(".tab").forEach(function(x){ x.classList.remove("is-active"); });
+      t.classList.add("is-active");
+    });
+  });
+
+  /* 分页演示可点击 */
+  $$(".pager button").forEach(function(b){
+    b.addEventListener("click", function(){
+      if (b.disabled || isNaN(parseInt(b.textContent, 10))) return;
+      var pager = b.parentElement;
+      pager.querySelectorAll("button").forEach(function(x){ x.classList.remove("is-active"); });
+      b.classList.add("is-active");
+    });
+  });
+
+  /* 开关演示可点击 */
+  $$(".switch").forEach(function(s){
+    if (s.classList.contains("is-disabled")) return;
+    s.addEventListener("click", function(){ s.classList.toggle("is-on"); });
+  });
+})();
+</script>
+</body>
+</html>
