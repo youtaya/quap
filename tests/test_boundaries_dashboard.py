@@ -376,6 +376,31 @@ def test_dashboard_login_normalizes_pasted_token_whitespace(monkeypatch):
     assert app.session_state["token"] == "test-token"
 
 
+def test_dashboard_login_separates_a_wrong_token_from_an_unreachable_backend(monkeypatch):
+    # The single "check your token, and confirm the backend is running" message sent an operator
+    # hunting for a stopped container when the real problem was a token read from the wrong checkout.
+    # A 401 and a transport failure must read differently.
+    def unauthorized(self, method, path, value=None):
+        raise ValueError("401: Unauthorized")
+
+    monkeypatch.setattr(client.Client, "request", unauthorized)
+    app = AppTest.from_file(str(APP), default_timeout=15).run()
+    app.text_input[0].set_value("wrong-token")
+    next(b for b in app.button if b.label == "进入工作台").click().run()
+    assert not app.sidebar.radio and not app.exception
+    assert any("访问令牌不正确" in item.value for item in app.error)
+
+    def unreachable(self, method, path, value=None):
+        raise httpx.ConnectError("connection refused")
+
+    monkeypatch.setattr(client.Client, "request", unreachable)
+    app = AppTest.from_file(str(APP), default_timeout=15).run()
+    app.text_input[0].set_value("any-token")
+    next(b for b in app.button if b.label == "进入工作台").click().run()
+    assert not app.sidebar.radio and not app.exception
+    assert any("无法连接后端服务" in item.value for item in app.error)
+
+
 @pytest.mark.postgres
 def test_dashboard_mutations_through_real_api_and_database(monkeypatch, db, settings, tmp_path):
     from fastapi.testclient import TestClient

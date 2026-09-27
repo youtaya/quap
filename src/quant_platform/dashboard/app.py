@@ -228,17 +228,28 @@ if "token" not in st.session_state:
             submitted = st.form_submit_button("进入工作台", type="primary", width="stretch")
         if submitted:
             # ``cat deploy/secrets/api_token`` ends in a newline, and httpx rejects any leading or
-            # trailing whitespace as an illegal header value before the request is sent — so the
-            # operator sees "check your token" even though the token is correct. ``Settings`` strips
-            # the token file, so the UI normalizes the pasted value the same way.
+            # trailing whitespace as an illegal header value before the request is sent. ``Settings``
+            # strips the token file, so the UI normalizes the pasted value the same way.
             token = token.strip()
             probe = Client(os.getenv("QUANT_API_URL", "http://127.0.0.1:8000"), token)
             try:
                 probe.request("GET", "/status")
                 st.session_state.token = token
                 st.rerun()
-            except (ValueError, httpx.HTTPError):
-                st.error("登录失败：请检查访问令牌，并确认后端服务已启动。")
+            except ValueError as exc:
+                # ``Client`` raises ``ValueError("<status>: <detail>")`` for any non-2xx response. A 401
+                # means the token is wrong; anything else means the backend answered badly. The two
+                # have different remedies, so they must not collapse into one message.
+                if str(exc).startswith("401"):
+                    st.error(
+                        "登录失败：访问令牌不正确。请确认读取的是**启动这个栈的那个目录**下的 "
+                        "`deploy/secrets/api_token` —— 同一台机器上的多个 checkout 各有一份互不"
+                        "相同的令牌。"
+                    )
+                else:
+                    st.error(f"登录失败：后端返回 {exc}")
+            except httpx.HTTPError:
+                st.error("登录失败：无法连接后端服务，请确认 API 容器已启动。")
         st.caption("安全提示：令牌仅用于当前会话。关闭页面不会中断后台采集。")
     st.stop()
 
