@@ -707,7 +707,7 @@ QUAP 是一个**单人操作员的 A 股研究工作台**。它的用户不是�
 |---|---|---|---|
 | 1 | `blockers` 是**平铺数组**，一次抛出 3–5 条 | `src/quant_platform/pipeline.py` | 操作员看到 5 个问题，实际是 1 个问题被摊成 5 行 |
 | 2 | 其中下游几条是上游卡点的**必然后果** | 同上 | 修完根因回来仍显示 Blocked，以为没修好 |
-| 3 | 成功提示**主动把用户送走** | `dashboard/workflow.py`：`st.success("Run … Follow progress in Data & Pipeline.")` | 每修一步都要离开当前空间 |
+| 3 | 成功提示**主动把用户送走** | `dashboard/workflow.py`（该文件已随 Streamlit 版删除）：`st.success("Run … Follow progress in Data & Pipeline.")` | 每修一步都要离开当前空间 |
 
 第 2 条是往返的真正机制。`没有已发布、已合格且未过期的 Qlib 模型` 与 `没有已验证的 Qlib 数据代次` 都是 `数据源未验证` 的下游结果，**它们不是三个问题，是一个问题被摊成了三行**。
 
@@ -881,28 +881,11 @@ QUAP 是一个**单人操作员的 A 股研究工作台**。它的用户不是�
 | 原始报告 JSON | 报告页 | L3 → 「原始报告」抽屉 |
 | 失败任务明细 | 「查看任务明细与失败重试」expander | L2 表格 + 行内重试按钮 |
 
-## 附录 D：Streamlit 组件映射表（便于落地）
+## 附录 D：Streamlit 组件映射表（已退役）
 
-| 设计组件 | Streamlit 实现 |
-|---|---|
-| `card` / `card-inset` | `st.container(border=True)` + CSS 覆写，或 `st.markdown` 注入 HTML 片段 |
-| `metric-tile` | `st.metric` + CSS 覆写 `[data-testid="stMetric"]` |
-| `button-primary` | `st.button(type="primary")` / `st.form_submit_button(type="primary")` |
-| `button-secondary` | `st.button()` / `st.form_submit_button()` |
-| `table` | `st.dataframe` + `column_config`（数值列右对齐），或 `st.markdown` 渲染 HTML 表格以精确控制涨跌色 |
-| `status-badge` | `st.markdown` + `unsafe_allow_html=True` 注入 span |
-| `banner` | `st.warning` / `st.error` / `st.info`（已内建语义色，配合 CSS 覆写到本规范色板） |
-| `detail-drawer` | **Streamlit 无原生抽屉**。降级方案：`st.dialog`（模态）或全宽 `st.expander`。若必须抽屉效果，需自定义组件或改用 HTML 覆盖层 |
-| `command-palette` | `st.dialog` + `st.text_input` + 过滤列表；快捷键需前端 hack，可降级为顶栏搜索框 |
-| `onboarding-step` | `st.markdown` 注入 HTML（含状态圆点与进度条） |
-| 页签 | `st.tabs` |
-| 侧边栏分组 | `st.sidebar` + `st.radio` + `micro` 组标题（`st.markdown` 注入） |
-| Toast | `st.toast` |
-| **`verdict-bar`（判决条）** | 无对应原生组件。`st.markdown` 注入 HTML；态别由 `blockers` 是否为空推导，**不得**用 `st.error`/`st.success` 替代——它们没有判决句与主行动区 |
-| **`chain` / `gate`（解锁链路）** | `st.markdown` 注入 HTML（推荐，一次渲染整条链）；或 `st.container(border=True)` 逐节点渲染。**禁止**用 `st.warning` 逐条平铺 |
-| **`fix-block`（卡点就地展开）** | `st.container(border=True)` + `st.button`；「需运维」类的指令用 `st.code`（自带复制按钮） |
-| **`nav-dot`（侧边栏判决点）** | `st.sidebar` 内 HTML 注入；降级方案：`st.radio` 的选项文案前缀 `●`/`○` |
-| **「我已处理，重新检测」** | `st.button` + `st.rerun()`；点击后 `st.spinner` 期间禁用，避免重复提交 |
+**本附录已作废。** 它记录的是把本规范落到 Streamlit 上的组件映射。Streamlit 版界面连同其源码（`src/quant_platform/dashboard/`）、`dashboard` 容器与 `quant-platform dashboard` 子命令已一并删除；当前唯一前端是 `frontend/` 的 React 工作台，落地方式见**附录 F**。
+
+组件本身（`verdict-bar` / `chain` / `gate` / `fix-block` / `nav-dot` 等）仍然有效——它们的定义见 §C，实现位置见附录 F 的目录职责表。
 
 **落地顺序建议**：
 
@@ -918,8 +901,8 @@ QUAP 是一个**单人操作员的 A 股研究工作台**。它的用户不是�
 
 | 阶段 | 内容 | 风险 | 收益 |
 |---|---|---|---|
-| **P0 文案中文化** | **已落地。** 7 个工作空间的显示名与描述、四个 dashboard 文件的全部按钮/标签/表头/空状态/提示、`LABELS`/`VALUES` 补全表格列与枚举取值、`client.py` 的传输层错误文案；六条 blocker 文案改在 `pipeline.py` 源头而非前端匹配翻译。术语问号气泡未做 | 极低（纯字符串） | 消除「中英混杂」这一最直观问题 |
-| **P1 状态语言统一** | **已落地（前端）。** 六状态色板 + 三载体在 `frontend/src/styles/` 与 `frontend/src/components/` 实现；顶栏收敛为一行徽标（**且徽标不得表达判决**）。Streamlit 版未回填——它将被前端取代 | 低 | 页面噪音大幅下降 |
+| **P0 文案中文化** | **已落地，且已随旧界面一并退役。** 当时改了 7 个工作空间的显示名与描述、四个 dashboard 文件的全部按钮/标签/表头/空状态/提示、`LABELS`/`VALUES` 补全表格列与枚举取值、`client.py` 的传输层错误文案；六条 blocker 文案改在 `pipeline.py` 源头而非前端匹配翻译。**该界面其后被 React 工作台取代，`src/quant_platform/dashboard/` 已删除**——但 blocker 源头文案这一条仍然有效 | 极低（纯字符串） | 消除「中英混杂」这一最直观问题 |
+| **P1 状态语言统一** | **已落地。** 六状态色板 + 三载体在 `frontend/src/styles/` 与 `frontend/src/components/` 实现；顶栏收敛为一行徽标（**且徽标不得表达判决**）。Streamlit 版不再回填——它已被前端取代并删除 | 低 | 页面噪音大幅下降 |
 | **P2 判决面** | **已落地（前端）。** 「今日」重构为判决条 + 解锁链路；`pipeline.py` 的 `blockers` 保留为机器可读原因，**新增 `gates` 结构化门禁链**（带 `stage` / `depends_on` / `action` / `evidence` / `status`）；卡点就地展开 + 动作类型三分（A.4） | 中高（需改后端 blocker 结构） | **消灭三个空间的一次往返**；「数据与任务」得以降级为只读 |
 | **P3 信息密度收敛** | L3 明细移入抽屉——前端已用 `<details>` 落地（判定证据、数据源明细、原始报告 JSON）；空状态补「下一步」操作待做 | 中 | 页面从"调试界面"变为"产品" |
 | **P4 效率增强** | ⌘K 命令面板、表格列筛选、键盘导航。键盘导航已达标（跳转链接、抽屉 Esc、`focus-visible`）；命令面板未做 | 中 | 高频用户效率提升 |
@@ -931,13 +914,13 @@ QUAP 是一个**单人操作员的 A 股研究工作台**。它的用户不是�
 
 ### 落地时的三处判断（与本文档原文的偏差，以及为什么）
 
-1. **`blockers` 与 `gates` 并存，而不是替换。** `blockers` 字符串继续产出（Streamlit 版与既有测试都依赖它），`gates` 是新增字段。两者由**同一份判定**派生，所以不可能漂移：`failures` 字典是唯一输入，字符串和门禁链都是它的投影。
+1. **`blockers` 与 `gates` 并存，而不是替换。** `blockers` 字符串继续产出（既有测试仍依赖它），`gates` 是新增字段。两者由**同一份判定**派生，所以不可能漂移：`failures` 字典是唯一输入，字符串和门禁链都是它的投影。
 2. **`blockers` 的顺序被修正。** 原先它是 append 出来的，于是「没有模型」排在「没有数据代次」前面——与 A.3 的依赖链正好反着读。现在顺序由 `GATE_SPECS` 决定，与依赖链一致。
 3. **⑥「今日建议」不进 `gates`。** 它问的不是「能不能跑」而是「跑出来的东西在不在」，混进 `ready` 会让「流水线可运行、今天还没推理」看起来像故障。它以 `readiness.frequencies[f].output` 单独承载，由前端在链路的第三阶段（「产出」）合成呈现。
 
 ## 附录 F：前端实现（React + Vite）
 
-新界面落在 `frontend/`，与 Streamlit 版并存（前端 8502，旧界面 8501），便于逐屏对照后再决定何时下线旧界面。
+新界面落在 `frontend/`，是**唯一**的前端。Streamlit 版连同其源码、`dashboard` 容器与 `quant-platform dashboard` 子命令已一并删除——两者并存的过渡期结束，无需再逐屏对照。
 
 ### 目录职责
 

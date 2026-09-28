@@ -516,10 +516,10 @@ def test_worker_refuses_a_kind_outside_the_declared_vocabulary(db, settings):
 
 
 def test_market_report_job_publishes_a_report(db, settings):
-    """`POST /market-report` 与看板的「生成/刷新报告」都排这个任务。
+    """`POST /market-report` 与工作台的「生成/刷新报告」都排这个任务。
 
     分派链漏掉它时，两条路径都只会拿到一个以 `Unknown job kind.` 失败的任务 —— 接口存在、
-    看板页面存在、`market_report.publish` 也写好了，但没有任何地方调用它。
+    工作台页面存在、`market_report.publish` 也写好了，但没有任何地方调用它。
     """
     from quant_platform.analysis import market_report
     from quant_platform.jobs.worker import Worker

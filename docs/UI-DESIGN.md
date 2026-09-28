@@ -15,7 +15,7 @@ scope:
   - 响应式断点与折叠策略
   - 可访问性验收标准
   - 动效规范
-  - Streamlit 落地顺序与验收
+  - 前端落地顺序与验收
 ---
 
 # QUAP 界面层交付文档
@@ -399,37 +399,18 @@ scope:
 | **P1** | 状态语言统一 | 六状态色板 + 三载体（徽标 / 横幅 / Toast）。顶栏收敛为一行徽标（**且徽标不得表达判决**），不在页面主体重复展示 |
 | **P2** | **判决面** | 「今日」重构为判决条 + 解锁链路（2.5）。验收：① 回答「今天能不能出建议」0 次跳转；② `blockers` 平铺数组还原为依赖链，阶段一独立、阶段二起只呈现首个卡点；③ 下游门禁不显示自身失败状态；④ 每个卡点标注动作类型，需运维类无假按钮。**前置：`pipeline.py` 需产出结构化 blocker（带 `gate`/`stage`/`depends_on`/`action_type`），否则依赖关系只能在前端硬编码** |
 | **P3** | 信息密度收敛 | L3 明细（原始 JSON、溯源链路、接口明细）全部移出主页面进抽屉；空状态补「下一步」操作 |
-| **P4** | 令牌落地 | 把 UI Kit 的 `:root` 令牌注入 Streamlit 自定义 CSS，替换所有硬编码色值 |
+| **P4** | 令牌落地 | 把 UI Kit 的 `:root` 令牌落到 `frontend/src/styles/tokens.css`，替换所有硬编码色值。**已落地** |
 | **P5** | 可访问性回归 | 实现后重跑 41 组对比度审计，确认覆写未引入新的不达标配对；七个断点横向溢出为 0 |
 
 > **为什么判决面（P2）排在信息密度收敛（P3）之前：** 信息密度收敛是纯工作量（做抽屉、搬 JSON），而判决面是一次**信息架构决策**——它决定了抽屉该挂在哪个空间。顺序反了，抽屉的归属会全部返工。
 
-### 9.2 Streamlit 组件映射
+### 9.2 组件映射（已退役）
 
-| 设计组件 | Streamlit 实现 | 落地注意 |
-|---|---|---|
-| 卡片 / 内嵌块 | `st.container(border=True)` | 需 CSS 覆写边框色与圆角 |
-| 指标磁贴 | `st.metric` | 覆写 `[data-testid="stMetric"]`，补口径行 |
-| 按钮 | `st.button(type="primary")` | 主按钮每视口仅一个 |
-| 表格 | `st.dataframe` | 数值列用 `column_config` 右对齐；涨跌色需 HTML 表格 |
-| 状态徽标 | `st.markdown(unsafe_allow_html=True)` | 无原生组件 |
-| 横幅 | `st.warning` / `st.error` / `st.info` | 覆写语义色到本规范色板 |
-| 详情抽屉 | `st.dialog` | **无原生抽屉**，降级为模态或 `st.expander` |
-| 命令面板 | `st.dialog` + `st.text_input` | 快捷键需前端 hack，可降级为顶栏搜索 |
-| 引导步骤 | `st.markdown(unsafe_allow_html=True)` | 含状态圆点与进度条 |
-| Toast | `st.toast` | 仅用于「操作已提交」类反馈 |
-| 骨架屏 | `st.spinner` / 占位 | 无骨架组件 |
-| 判决条（c13） | `st.markdown(unsafe_allow_html=True)` | **无原生组件**；态别由 `blockers` 是否为空推导，不得用 `st.error`/`st.success` 替代 |
-| 解锁链路（c13） | `st.markdown` 注入 HTML（推荐，一次渲染整条链） | **禁止**用 `st.warning` 逐条平铺——那正是要修掉的做法 |
-| 卡点展开块（c13） | `st.container(border=True)` + `st.button` | 「需运维」类指令用 `st.code`（自带复制按钮） |
-| 侧边栏常驻判决块（c13） | `st.sidebar` 内 `st.markdown` 注入 HTML | 置于品牌区下、导航上；**不得**放进 `st.radio` 的选项文案里（会随选中态变色失效） |
-| 「我已处理，重新检测」 | `st.button` + `st.rerun()` | 点击后 `st.spinner` 期间禁用，避免重复提交 |
+**本节已作废。** 它记录的是把本规范落到 Streamlit 上的组件映射。Streamlit 版界面连同其源码（`src/quant_platform/dashboard/`）、`dashboard` 容器与 `quant-platform dashboard` 子命令已一并删除；当前唯一前端是 `frontend/` 的 React 工作台，组件落地方式见 `docs/DESIGN.md` **附录 F**。
 
 ### 9.3 已知约束
 
-- **Streamlit 无原生抽屉组件。** 必须保留抽屉效果时需自定义组件，否则降级为模态。
-- **Streamlit 无原生骨架屏。** 加载态用 `st.spinner` 或占位块替代，占位块条目数应与真实内容量接近，避免加载完成后布局大幅跳动。
-- **涨跌色需 HTML 表格。** `st.dataframe` 无法逐格上色，涨跌列需退化为 `st.markdown` 渲染的 HTML 表格。
+Streamlit 时代的三条约束（无原生抽屉、无原生骨架屏、`st.dataframe` 无法逐格上色）随该实现一并消失。当前实现的三条约束改由 `docs/DESIGN.md` 附录 F「三条实现约束」承担——**文案在展示层、不自动轮询、版本错配必须明说**。
 
 ---
 
@@ -520,9 +501,9 @@ scope:
 | `docs/prototype/quap-ui-kit.html` | 界面层权威。8 个基础章节 + 12 类组件展示台 + 41 组对比度审计 + 开发交付。顶栏两个开关可切换「尺寸标注」与「键盘焦点」演示 |
 | `docs/prototype/quap-interaction-design.html` | 交互层可点击原型。含 ⌘K 命令面板、右侧详情抽屉、移动端底部标签栏 |
 | `docs/prototype/quap-decision-surface.html` | **判决面原型（第三轮核心交付）**。单屏回答「今天能不能出建议」：判决条 + 解锁链路 + 卡点就地展开。含 4 个判决场景（数据源未验证 / 引擎离线 / 可出未生成 / 建议已就绪）与「改造前 · 现状对照」视图（还原平铺警告并标注根因/后果、往返路径图示、7 行对比表） |
-| `docs/DESIGN.md` | 交互层规范。九章结构 + 附录 A 决策优先的信息架构 / B 统一状态语言 / C 三层信息密度 / D Streamlit 映射 / E 迭代路线图 |
+| `docs/DESIGN.md` | 交互层规范。九章结构 + 附录 A 决策优先的信息架构 / B 统一状态语言 / C 三层信息密度 / D Streamlit 映射（已退役）/ E 迭代路线图 / F 前端实现（React + Vite） |
 | `docs/UI-DESIGN.md` | 本文件。界面层交付文档 |
 
 ---
 
-**界面层交付状态：** 令牌、组件、状态矩阵、对比度审计、响应式七断点均已实测通过；判决面（c13）已纳入组件规范（2.5）并完成原型验证。代码落地按第 9.1 节与 DESIGN.md 附录 E 的顺序推进——**判决面（P2）优先于信息密度收敛（P3）**，因为它是信息架构决策，先做抽屉会导致归属空间返工。
+**界面层交付状态：** 令牌、组件、状态矩阵、对比度审计、响应式七断点均已实测通过；判决面（c13）已纳入组件规范（2.5）并完成原型验证。**代码落地已完成**：`frontend/` 的 React 工作台已上线，Streamlit 版已下线并删除，落地细节与实测结果见 `docs/DESIGN.md` 附录 F。

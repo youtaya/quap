@@ -1,11 +1,14 @@
 /**
  * 枚举的显示名。**键是路由标识符与后端枚举值，必须保持原样**——只有显示名是中文化。
  *
- * 这条约束来自 P0 的教训：工作空间的键同时是路由标识符（侧边栏交给 `render`，`render` 拿它做
- * `page ==` 比较），改键会同时打断导航与测试。所以中文只落在 label 上。
+ * 这条约束来自 P0 的教训：工作空间的 `path` 同时是路由标识符（`Sidebar` 按它建索引，`AppShell`
+ * 按它反查当前工作空间，`resolveWorkspace` 也按它做前缀匹配），改键会同时打断导航与测试。
+ * 所以中文只落在 `label` 上。
  *
- * 词表与 `src/quant_platform/dashboard/workflow.py` 的 `WORKSPACE_LABELS` / `FREQUENCIES` /
- * `STATES`、以及 `src/quant_platform/domain/workflow.py` 的 `CAPABILITY_LABELS` 保持一致。
+ * 词表来源分两类：`WORKSPACES` / `FREQUENCIES` / `STATES` 原先是
+ * `src/quant_platform/dashboard/workflow.py` 的镜像，那个文件已随 Streamlit 版一起删除，这里
+ * 就是唯一定义；`CAPABILITY_LABELS` 则仍需与 `src/quant_platform/domain/workflow.py` 保持
+ * 一致——它还在后端，`pipeline.py` 用同一份词表拼就绪阻塞文案。
  */
 
 export interface Workspace {

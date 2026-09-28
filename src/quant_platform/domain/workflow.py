@@ -13,9 +13,10 @@ ENGINE_VERSION = "qlib-v1"
 DATA_CONTRACT = "qlib-adjusted-v1"
 Frequency = Literal["day", "5min"]
 
-# 数据契约里各数据源能力的**显示名**。同一个词表被两处消费：`pipeline.py` 用它拼就绪阻塞文案，
-# 仪表盘用它渲染「数据源能力」表。放在这里是因为两边都要用，而 `dashboard` 不得依赖 `pipeline`
-# （后者会拖进数据库依赖），`pipeline` 也不该反向依赖展示层。
+# 数据契约里各数据源能力的**显示名**。它服务于「阻塞文案」这一条链路：`pipeline.py` 用它拼就绪
+# 阻塞文案，前端工作台持有一份同值副本（`frontend/src/domain/labels.ts`）用于「数据源能力」表。
+# 放在 domain 而不是 `pipeline.py`，是因为词表属于数据契约本身，而 `pipeline` 会拖进数据库依赖——
+# 任何想拿这份显示名的调用方都不该被迫先连上 PostgreSQL。
 CAPABILITY_LABELS = {
     "securities": "证券目录",
     "calendar": "交易日历",

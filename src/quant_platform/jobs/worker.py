@@ -238,7 +238,7 @@ class Worker:
         elif kind == "intraday":
             analyze.intraday(self.db, job)
         elif kind == "market_report":
-            # `POST /market-report` 与看板的「生成/刷新报告」都排这个任务；分派链漏掉它时，两者
+            # `POST /market-report` 与工作台的「生成/刷新报告」都排这个任务；分派链漏掉它时，两者
             # 都只会拿到一个以 "Unknown job kind." 失败的任务。
             from quant_platform.analysis import market_report
 

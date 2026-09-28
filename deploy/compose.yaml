@@ -160,21 +160,8 @@ services:
       interval: 15s
       timeout: 12s
       retries: 3
-  dashboard:
-    <<: *app
-    command: [dashboard, --host, 0.0.0.0, --port, "8501"]
-    environment:
-      QUANT_API_URL: http://api:8000
-    secrets: []
-    volumes: []
-    ports: ["127.0.0.1:8501:8501"]
-    healthcheck:
-      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health',timeout=5)"]
-      interval: 15s
-      timeout: 8s
-      retries: 3
-  # React 工作台（按操作员决策组织的新界面）。与 Streamlit 版并存，端口分开，便于逐屏对照后再
-  # 决定何时下线旧界面。
+  # 操作员工作台（按操作员决策组织的新界面）。它是**唯一**的前端——Streamlit 版已下线，
+  # 连同 `src/quant_platform/dashboard/` 一起删除。
   #
   # 它**不**走 `x-app`：那套锚点绑的是 Python 原生镜像与只读根文件系统下的一套挂载约定。
   # 这里需要的是 nginx + 静态产物，而且它刻意不持有任何密钥——令牌由操作员在浏览器里输入，

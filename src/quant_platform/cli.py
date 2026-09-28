@@ -91,46 +91,6 @@ def main():
 
         uvicorn.run(create_app(settings), host=args.host, port=args.port, access_log=False)
         return
-    if args.action == "dashboard":
-        import subprocess
-        import sys
-
-        app = Path(__file__).parent / "dashboard/app.py"
-        raise SystemExit(
-            subprocess.call(
-                [
-                    sys.executable,
-                    "-m",
-                    "streamlit",
-                    "run",
-                    str(app),
-                    "--server.address",
-                    args.host,
-                    "--server.port",
-                    str(args.port),
-                    "--server.headless",
-                    "true",
-                    "--browser.gatherUsageStats",
-                    "false",
-                    "--theme.base",
-                    "light",
-                    "--theme.primaryColor",
-                    "#3568d4",
-                    "--theme.backgroundColor",
-                    "#f5f7fb",
-                    "--theme.secondaryBackgroundColor",
-                    "#ffffff",
-                    "--theme.textColor",
-                    "#203452",
-                    "--theme.sidebar.backgroundColor",
-                    "#13213b",
-                    "--theme.sidebar.secondaryBackgroundColor",
-                    "#203555",
-                    "--theme.sidebar.textColor",
-                    "#dce6f7",
-                ]
-            )
-        )
     if args.action == "restore-check":
         if not args.archive or not args.target_dsn_file:
             parser.error("restore-check requires --archive and --target-dsn-file")

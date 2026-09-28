@@ -20,8 +20,10 @@ export interface Column<T> {
 }
 
 /**
- * 枚举列的本地化。键与 `src/quant_platform/dashboard/app.py` 的 `ENUM_COLUMNS` 对应，
- * 命中不到就原样显示——不吞信息。
+ * 枚举列的本地化。命中不到就原样显示——不吞信息。
+ *
+ * 这组映射原先是 `src/quant_platform/dashboard/app.py` 的 `ENUM_COLUMNS` 的镜像；那个文件已随
+ * Streamlit 版一起删除，所以这里就是唯一定义，改这里不必再去同步别处。
  */
 const ENUM_MAPS: Record<string, Record<string, string>> = {
   board: BOARDS,

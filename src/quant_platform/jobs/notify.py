@@ -47,7 +47,7 @@ def recommendation_change(db, conn, report_id, frequency, portfolio_id, output, 
         "changed_symbols": changes,
         "available_at": available.isoformat(),
         "valid_until": expires.isoformat(),
-        "message": "Review the current Qlib proposal and its validity in the dashboard. No orders sent.",
+        "message": "Review the current Qlib proposal and its validity in the operator workbench. No orders sent.",
         "orders": False,
     }
     conn.execute("INSERT INTO alerts(event_key,data) VALUES(%s,%s)", (event_key, jsonb(payload)))

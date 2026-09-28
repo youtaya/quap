@@ -26,9 +26,9 @@
   <text x="60" y="180" class="body">Model portfolios and approvals</text>
   <text x="60" y="205" class="small">Local access or SSH tunnel</text>
   <rect x="390" y="120" width="280" height="105" class="box"/>
-  <text x="410" y="153" class="label">Streamlit dashboard</text>
-  <text x="410" y="180" class="body">API-only client · token login</text>
-  <text x="410" y="205" class="small">Seven workspaces · loopback :8501</text>
+  <text x="410" y="153" class="label">Operator workbench</text>
+  <text x="410" y="180" class="body">React SPA · nginx · token login</text>
+  <text x="410" y="205" class="small">Seven workspaces · loopback :8502</text>
   <rect x="750" y="120" width="300" height="105" class="box"/>
   <text x="770" y="153" class="label">FastAPI /api/v1</text>
   <text x="770" y="180" class="body">Intent · run graph · provenance</text>
