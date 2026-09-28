@@ -1,0 +1,504 @@
+/* ============================================================================
+ * 组件层。六种状态 × 三种载体（附录 B）：
+ *
+ *   徽标 status-badge   点状，用于表格行、卡片角、列表项——密度最高，所以最小；
+ *   横幅 banner         块状，用于「这一屏为什么不工作」，常驻、可关闭；
+ *   轻提示 toast        浮层，用于「刚才那个动作的结果」，短暂、不打断。
+ *
+ * 状态色只能来自 --state-*。**不得**借用 --quote-*：把「跌」的绿用到「正常」上，
+ * 操作员会以为行情在跌。
+ * ========================================================================= */
+
+/* ── 徽标 ─────────────────────────────────────────────────────────────── */
+
+.qp-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 9px 2px 7px;
+  border-radius: var(--radius-pill);
+  font-size: 0.75rem;
+  font-weight: 560;
+  line-height: 1.6;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+
+.qp-badge::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
+}
+
+/* 状态不只由颜色承载：形状/图标位与文字都要参与（附录 8 可访问性）。
+   无点的实心徽标用于「纯标签」场景。 */
+.qp-badge--plain::before {
+  display: none;
+}
+
+.qp-ok {
+  color: var(--state-ok);
+  background: var(--state-ok-bg);
+  border-color: var(--state-ok-line);
+}
+.qp-warn {
+  color: var(--state-warn);
+  background: var(--state-warn-bg);
+  border-color: var(--state-warn-line);
+}
+.qp-error {
+  color: var(--state-error);
+  background: var(--state-error-bg);
+  border-color: var(--state-error-line);
+}
+.qp-info {
+  color: var(--state-info);
+  background: var(--state-info-bg);
+  border-color: var(--state-info-line);
+}
+.qp-busy {
+  color: var(--state-busy);
+  background: var(--state-busy-bg);
+  border-color: color-mix(in srgb, var(--state-busy) 22%, transparent);
+}
+.qp-idle {
+  color: var(--state-idle);
+  background: var(--state-idle-bg);
+  border-color: var(--hairline);
+}
+
+/* 行情色。只用于涨跌，**不**与上面混用。 */
+.qp-up {
+  color: var(--quote-up);
+}
+.qp-down {
+  color: var(--quote-down);
+}
+.qp-flat {
+  color: var(--quote-flat);
+}
+
+/* 进行中：点做呼吸，让「还在跑」一眼可辨，而不是靠读文字。 */
+.qp-busy.qp-badge:not(.qp-badge--plain)::before {
+  animation: qp-pulse 1.4s var(--ease-inout) infinite;
+}
+
+@keyframes qp-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.35;
+    transform: scale(0.8);
+  }
+}
+
+/* ── 卡片与面板 ───────────────────────────────────────────────────────── */
+
+.qp-card {
+  background: var(--surface-1);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  padding: var(--space-5);
+  min-width: 0;
+}
+
+.qp-card--flush {
+  padding: 0;
+  overflow: hidden;
+}
+
+.qp-card__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.qp-card__title {
+  font-size: 0.9375rem;
+  font-weight: 620;
+}
+
+.qp-card__meta {
+  color: var(--ink-500);
+  font-size: 0.8125rem;
+}
+
+/* ── 横幅 ─────────────────────────────────────────────────────────────── */
+
+.qp-banner {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  margin-bottom: var(--space-4);
+}
+
+.qp-banner__icon {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+}
+
+.qp-banner__body {
+  min-width: 0;
+  flex: 1;
+}
+
+.qp-banner__title {
+  font-weight: 620;
+  font-size: 0.875rem;
+}
+
+.qp-banner__detail {
+  font-size: 0.8125rem;
+  margin-top: 2px;
+  overflow-wrap: anywhere;
+}
+
+.qp-banner__actions {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  margin-top: var(--space-3);
+}
+
+/* ── 按钮 ─────────────────────────────────────────────────────────────── */
+
+.qp-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--hairline-strong);
+  background: var(--surface-1);
+  color: var(--ink-900);
+  font-size: 0.875rem;
+  font-weight: 560;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out);
+}
+
+.qp-btn:hover:not(:disabled) {
+  background: var(--surface-3);
+  border-color: var(--ink-200);
+}
+
+.qp-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.qp-btn--primary {
+  background: var(--brand-600);
+  border-color: var(--brand-600);
+  color: var(--on-brand);
+}
+
+.qp-btn--primary:hover:not(:disabled) {
+  background: var(--brand-700);
+  border-color: var(--brand-700);
+}
+
+.qp-btn--quiet {
+  background: transparent;
+  border-color: transparent;
+  color: var(--brand-600);
+  padding: 0 var(--space-2);
+}
+
+.qp-btn--quiet:hover:not(:disabled) {
+  background: var(--brand-50);
+  border-color: transparent;
+}
+
+.qp-btn--sm {
+  min-height: 30px;
+  font-size: 0.8125rem;
+  padding: 0 var(--space-3);
+}
+
+/* 触摸目标：窄屏上按钮不得小于 44px（附录 8.2）。桌面保持紧凑，因为指针精度足够。 */
+@media (pointer: coarse), (max-width: 639px) {
+  .qp-btn {
+    min-height: var(--tap-target);
+  }
+  .qp-btn--sm {
+    min-height: 36px;
+  }
+}
+
+/* ── 输入 ─────────────────────────────────────────────────────────────── */
+
+.qp-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.qp-field__label {
+  font-size: 0.8125rem;
+  font-weight: 560;
+  color: var(--ink-700);
+}
+
+.qp-input,
+.qp-select {
+  min-height: 36px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+  width: 100%;
+  min-width: 0;
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+
+.qp-input:hover,
+.qp-select:hover {
+  border-color: var(--ink-200);
+}
+
+.qp-input[aria-invalid='true'] {
+  border-color: var(--state-error);
+}
+
+.qp-input--mono {
+  font-family: var(--font-num);
+  letter-spacing: 0.02em;
+}
+
+.qp-field__hint {
+  font-size: 0.75rem;
+  color: var(--ink-500);
+}
+
+.qp-field__error {
+  font-size: 0.75rem;
+  color: var(--state-error);
+}
+
+@media (pointer: coarse), (max-width: 639px) {
+  .qp-input,
+  .qp-select {
+    min-height: var(--tap-target);
+  }
+}
+
+/* ── 表格 ─────────────────────────────────────────────────────────────── */
+
+.qp-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg);
+  background: var(--surface-1);
+  /* 横向滚动只发生在表格容器内部，绝不外溢到页面。 */
+  max-width: 100%;
+}
+
+.qp-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8125rem;
+}
+
+.qp-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface-2);
+  text-align: left;
+  font-weight: 620;
+  color: var(--ink-700);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--hairline-strong);
+  white-space: nowrap;
+}
+
+.qp-table td {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--hairline);
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.qp-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.qp-table tbody tr:hover td {
+  background: var(--surface-2);
+}
+
+.qp-table td.qp-table__num,
+.qp-table th.qp-table__num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+  white-space: nowrap;
+}
+
+/* ── 空状态 ───────────────────────────────────────────────────────────── */
+
+.qp-empty {
+  padding: var(--space-6) var(--space-4);
+  text-align: center;
+  color: var(--ink-500);
+  font-size: 0.875rem;
+  border: 1px dashed var(--hairline-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+}
+
+/* ── 可复制指令 ───────────────────────────────────────────────────────── */
+
+.qp-command {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--surface-3);
+  margin-top: var(--space-2);
+}
+
+.qp-command code {
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  font-size: 0.75rem;
+  line-height: 1.6;
+  overflow-x: auto;
+  white-space: pre;
+  color: var(--ink-900);
+}
+
+.qp-command button {
+  flex: none;
+  border: none;
+  border-left: 1px solid var(--hairline-strong);
+  background: var(--surface-1);
+  padding: 0 var(--space-3);
+  font-size: 0.75rem;
+  font-weight: 560;
+  color: var(--brand-600);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.qp-command button:hover {
+  background: var(--brand-50);
+}
+
+/* ── 轻提示（Toast） ──────────────────────────────────────────────────── */
+
+.qp-toasts {
+  position: fixed;
+  right: var(--space-4);
+  bottom: var(--space-4);
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-width: min(420px, calc(100vw - var(--space-6)));
+  pointer-events: none;
+}
+
+.qp-toast {
+  pointer-events: auto;
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-start;
+  padding: var(--space-3) var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  background: var(--surface-1);
+  box-shadow: var(--shadow-lg);
+  font-size: 0.8125rem;
+  animation: qp-toast-in var(--dur-slow) var(--ease-out);
+}
+
+.qp-toast__body {
+  flex: 1;
+  min-width: 0;
+}
+
+.qp-toast__title {
+  font-weight: 620;
+}
+
+.qp-toast__close {
+  flex: none;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: var(--ink-500);
+  padding: 0 2px;
+  line-height: 1;
+  font-size: 1rem;
+}
+
+@keyframes qp-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (max-width: 639px) {
+  .qp-toasts {
+    left: var(--space-3);
+    right: var(--space-3);
+    bottom: var(--space-3);
+    max-width: none;
+  }
+}
+
+/* ── 分隔与骨架 ───────────────────────────────────────────────────────── */
+
+.qp-divider {
+  height: 1px;
+  background: var(--hairline);
+  border: none;
+  margin: var(--space-5) 0;
+}
+
+.qp-skeleton {
+  background: linear-gradient(90deg, var(--surface-3) 25%, var(--surface-2) 37%, var(--surface-3) 63%);
+  background-size: 400% 100%;
+  animation: qp-shimmer 1.4s ease infinite;
+  border-radius: var(--radius-sm);
+  height: 1em;
+}
+
+@keyframes qp-shimmer {
+  from {
+    background-position: 100% 50%;
+  }
+  to {
+    background-position: 0 50%;
+  }
+}

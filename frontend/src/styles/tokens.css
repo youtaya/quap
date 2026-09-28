@@ -1,0 +1,124 @@
+/* ============================================================================
+ * 设计令牌 —— 单一事实来源是 `docs/prototype/quap-ui-kit.html` 的 `:root`。
+ *
+ * 这份文件是它的**副本**，不是它的替代。改令牌要先改 UI kit，再同步到这里；两处不一致时
+ * 以 UI kit 为准（那里带着 41 组对比度审计，改错了会被审计抓出来）。
+ *
+ * 三色语义严格分离，不得混用：
+ *   行情色 --quote-*  只表达涨跌，红涨绿跌，**不可反转**（中国市场惯例）；
+ *   状态色 --state-*  只表达六种状态，与涨跌无关；
+ *   中性色 --ink-*    文字与描边。
+ * 把「跌」的绿用到「正常」上，操作员会以为行情在跌。
+ * ========================================================================= */
+
+:root {
+  /* 品牌 — 单一强调色，稀缺使用 */
+  --brand-700: #1d3f7d;
+  --brand-600: #2a55c8;
+  --brand-500: #3567d6;
+  --brand-400: #6b93e6;
+  --brand-200: #c7d8f7;
+  --brand-100: #e4ecfc;
+  --brand-50: #f2f6fd;
+
+  /* 深色面 */
+  --navy-950: #0c182e;
+  --navy-900: #122340;
+  --navy-800: #1a3055;
+  --navy-700: #24406e;
+  --nav-100: #a8bcd9;
+  --nav-200: #dce6f5;
+  --nav-300: #7b8fb3;
+
+  /* 深色面状态点/状态文字 — 只允许出现在 navy-* 底上（侧边栏判决标记） */
+  --nav-ok: #5cc79a;
+  --nav-err: #f0848c;
+  --on-brand: #ffffff;
+
+  /* 文字 — 三级文字灰 + 一级非文字色 */
+  --ink-900: #0e1c33;
+  --ink-700: #2b3c57;
+  --ink-500: #5b6c86;
+  --ink-200: #aab6c8;
+
+  /* 表面 */
+  --canvas: #f5f7fb;
+  --surface-1: #ffffff;
+  --surface-2: #fbfcfe;
+  --surface-3: #eef2f8;
+  --hairline: #e3e9f3;
+  --hairline-strong: #cfd8e6;
+
+  /* 行情 — 红涨绿跌，不可反转 */
+  --quote-up: #d32935;
+  --quote-up-bg: #fdeef0;
+  --quote-down: #0c8050;
+  --quote-down-bg: #e8f7f0;
+  --quote-flat: #5b6c86;
+
+  /* 状态语义 — 与行情色严格分离 */
+  --state-ok: #117e56;
+  --state-ok-bg: #e6f5ee;
+  --state-warn: #a36100;
+  --state-warn-bg: #fff4e0;
+  --state-error: #c8303c;
+  --state-error-bg: #fdecee;
+  --state-info: #2a55c8;
+  --state-info-bg: #e8effc;
+  --state-busy: #6a5ad2;
+  --state-busy-bg: #efecfc;
+  --state-idle: #5e6f88;
+  --state-idle-bg: #eef1f6;
+
+  /* 语义面板描边 — tinted 面板（横幅、判决条、卡点块）的 1px 边，是 *-bg 的同色相压深 */
+  --state-ok-line: #bfe4d4;
+  --state-info-line: #c9daf5;
+  --state-warn-line: #f0dcb4;
+  --state-error-line: #f2c9cd;
+
+  /* 字体 */
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "PingFang SC", "HarmonyOS Sans SC",
+    "Microsoft YaHei", "Source Han Sans SC", system-ui, sans-serif;
+  --font-num: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+
+  /* 阴影 — 海军蓝着色，非纯黑 */
+  --shadow-xs: 0 1px 2px rgba(16, 39, 77, 0.06);
+  --shadow-sm: 0 1px 3px rgba(16, 39, 77, 0.07), 0 1px 2px rgba(16, 39, 77, 0.04);
+  --shadow-md: 0 4px 12px rgba(16, 39, 77, 0.08), 0 1px 3px rgba(16, 39, 77, 0.05);
+  --shadow-lg: 0 12px 32px rgba(16, 39, 77, 0.1), 0 2px 8px rgba(16, 39, 77, 0.06);
+  --shadow-xl: 0 24px 64px rgba(16, 39, 77, 0.14), 0 4px 16px rgba(16, 39, 77, 0.07);
+  --shadow-focus: 0 0 0 3px rgba(53, 103, 214, 0.22);
+
+  /* 动效 */
+  --ease-out: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-inout: cubic-bezier(0.4, 0, 0.2, 1);
+  --dur-fast: 120ms;
+  --dur-base: 180ms;
+  --dur-slow: 240ms;
+}
+
+/* 令牌里没有、但布局层需要的一组尺寸。放在这里而不是散落在组件里，是为了让「间距系统」只有一处。 */
+:root {
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-pill: 999px;
+
+  /* 断点（仅作文档；CSS 变量不能用于媒体查询，见 styles/base.css 的说明）：
+     窄屏 0–639 / 中屏 640–1023 / 宽屏 1024–1279 / 超宽 ≥1280 */
+  --sidebar-width: 244px;
+  --topbar-height: 56px;
+  --content-max: 1180px;
+
+  /* 触摸目标最小边长（附录 8.2） */
+  --tap-target: 44px;
+}

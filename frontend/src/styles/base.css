@@ -1,0 +1,247 @@
+/* ============================================================================
+ * 基础层：重置、排版、布局骨架、可访问性基线。
+ *
+ * 断点（与 docs/DESIGN.md 附录 8.1 一致，CSS 变量不能用于媒体查询，所以这里写死数值）：
+ *   窄屏 0–639 / 中屏 640–1023 / 宽屏 1024–1279 / 超宽 ≥1280
+ * ========================================================================= */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--canvas);
+  color: var(--ink-900);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1,
+h2,
+h3,
+h4,
+p,
+figure {
+  margin: 0;
+}
+
+h1 {
+  font-size: 1.5rem;
+  line-height: 1.3;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+h2 {
+  font-size: 1.0625rem;
+  line-height: 1.4;
+  font-weight: 620;
+}
+
+h3 {
+  font-size: 0.9375rem;
+  line-height: 1.45;
+  font-weight: 620;
+}
+
+a {
+  color: var(--brand-600);
+  text-decoration-color: color-mix(in srgb, var(--brand-600) 35%, transparent);
+  text-underline-offset: 2px;
+}
+
+a:hover {
+  text-decoration-color: currentColor;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+code,
+kbd,
+samp {
+  font-family: var(--font-num);
+  font-size: 0.9em;
+}
+
+/* 数字列一律等宽，否则表格里小数点在跳动。 */
+.qp-num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+/* ── 焦点可见 ─────────────────────────────────────────────────────────────
+ * 只用 `:focus-visible`，鼠标点击不显示焦点环；键盘导航必须能看见自己在哪。 */
+:focus-visible {
+  outline: 2px solid var(--brand-500);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+.qp-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* 跳到主内容。键盘用户按第一下 Tab 就该拿到它，而不是逐个穿过整个侧边栏。 */
+.qp-skip {
+  position: absolute;
+  left: var(--space-4);
+  top: -100px;
+  z-index: 100;
+  padding: var(--space-2) var(--space-4);
+  background: var(--surface-1);
+  border: 1px solid var(--brand-500);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  transition: top var(--dur-fast) var(--ease-out);
+}
+
+.qp-skip:focus {
+  top: var(--space-4);
+}
+
+/* ── 应用骨架 ─────────────────────────────────────────────────────────── */
+
+.qp-app {
+  display: grid;
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+.qp-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0; /* 关键：没有它，宽表格会把整个栅格撑破并产生横向滚动 */
+}
+
+.qp-content {
+  flex: 1;
+  width: 100%;
+  max-width: var(--content-max);
+  margin: 0 auto;
+  padding: var(--space-6) var(--space-6) var(--space-8);
+  min-width: 0;
+}
+
+/* ── 页标题 ───────────────────────────────────────────────────────────── */
+
+.qp-heading {
+  margin-bottom: var(--space-5);
+}
+
+.qp-heading h1 {
+  margin-bottom: var(--space-1);
+}
+
+.qp-heading p {
+  color: var(--ink-500);
+  max-width: 68ch;
+}
+
+/* ── 通用排版 ─────────────────────────────────────────────────────────── */
+
+.qp-section {
+  margin-top: var(--space-6);
+}
+
+.qp-section > h2 {
+  margin-bottom: var(--space-3);
+}
+
+.qp-caption {
+  color: var(--ink-500);
+  font-size: 0.8125rem;
+  line-height: 1.55;
+}
+
+.qp-muted {
+  color: var(--ink-500);
+}
+
+.qp-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.qp-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.qp-grid {
+  display: grid;
+  gap: var(--space-4);
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+/* ── 响应式 ─────────────────────────────────────────────────────────────
+ * 窄屏把侧边栏收成抽屉（见 shell.css），内容区左右留白收紧。
+ * 无论多窄，都不允许出现横向滚动——这是回归测试的硬指标。 */
+@media (max-width: 1023px) {
+  .qp-app {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .qp-content {
+    padding: var(--space-5) var(--space-4) var(--space-7);
+  }
+}
+
+@media (max-width: 639px) {
+  body {
+    font-size: 14.5px;
+  }
+
+  h1 {
+    font-size: 1.3125rem;
+  }
+
+  .qp-content {
+    padding: var(--space-4) var(--space-3) var(--space-6);
+  }
+
+  .qp-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ── 动效偏好 ─────────────────────────────────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

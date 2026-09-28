@@ -1,0 +1,415 @@
+/* ============================================================================
+ * 「今日」判决面。
+ *
+ * 这一屏要回答一个问题：今天能不能出建议，以及为什么。三块内容：
+ *   判决条    —— 一句话结论 + 唯一的那个主按钮
+ *   解锁链路  —— 按依赖顺序摊开的门禁，卡点就地展开
+ *   证据      —— L3，默认折叠（原始 JSON 不进视线）
+ *
+ * 连接轨（rail）只在**真依赖**处绘制：阶段一三项互相独立，画了轨就是在说「① 之后才是 ②」；
+ * 阶段二内部 ④→⑤ 是真依赖，才画。跨阶段不画轨，顺序由阶段标签承载（附录 A.3 规则 3）。
+ * ========================================================================= */
+
+/* ── 判决条 ───────────────────────────────────────────────────────────── */
+
+.qp-verdict {
+  border-radius: var(--radius-lg);
+  border: 1px solid;
+  padding: var(--space-5);
+  margin-bottom: var(--space-5);
+}
+
+.qp-verdict--error {
+  background: var(--state-error-bg);
+  border-color: var(--state-error-line);
+}
+
+.qp-verdict--ok {
+  background: var(--state-ok-bg);
+  border-color: var(--state-ok-line);
+}
+
+.qp-verdict--info {
+  background: var(--state-info-bg);
+  border-color: var(--state-info-line);
+}
+
+.qp-verdict--idle {
+  background: var(--state-idle-bg);
+  border-color: var(--hairline);
+}
+
+.qp-verdict__top {
+  display: flex;
+  gap: var(--space-4);
+  align-items: flex-start;
+}
+
+.qp-verdict__icon {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-md);
+  display: grid;
+  place-items: center;
+  font-size: 20px;
+  font-weight: 700;
+  background: var(--surface-1);
+  border: 1px solid currentColor;
+}
+
+.qp-verdict--error .qp-verdict__icon {
+  color: var(--state-error);
+}
+
+.qp-verdict--ok .qp-verdict__icon {
+  color: var(--state-ok);
+}
+
+.qp-verdict--info .qp-verdict__icon {
+  color: var(--state-info);
+}
+
+.qp-verdict--idle .qp-verdict__icon {
+  color: var(--state-idle);
+}
+
+.qp-verdict__body {
+  min-width: 0;
+  flex: 1;
+}
+
+.qp-verdict__eyebrow {
+  font-size: 0.6875rem;
+  letter-spacing: 0.6px;
+  font-weight: 600;
+  color: var(--ink-500);
+  margin-bottom: 2px;
+}
+
+.qp-verdict__sentence {
+  font-size: 1.25rem;
+  font-weight: 680;
+  line-height: 1.35;
+  letter-spacing: -0.01em;
+  color: var(--ink-900);
+  margin-bottom: var(--space-2);
+}
+
+.qp-verdict__reason {
+  font-size: 0.875rem;
+  line-height: 1.65;
+  color: var(--ink-700);
+  max-width: 72ch;
+}
+
+.qp-verdict__reason b {
+  font-weight: 640;
+  color: var(--ink-900);
+}
+
+.qp-verdict__action {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-top: var(--space-4);
+}
+
+.qp-verdict__note {
+  font-size: 0.75rem;
+  color: var(--ink-500);
+  max-width: 46ch;
+}
+
+.qp-verdict__foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px solid color-mix(in srgb, var(--ink-200) 45%, transparent);
+  font-size: 0.75rem;
+  color: var(--ink-500);
+}
+
+/* ── 解锁链路 ─────────────────────────────────────────────────────────── */
+
+.qp-chain {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.qp-stage__head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-3);
+}
+
+.qp-stage__title {
+  font-size: 0.9375rem;
+  font-weight: 640;
+  color: var(--ink-900);
+}
+
+.qp-stage__dep {
+  font-size: 0.75rem;
+  color: var(--ink-500);
+}
+
+.qp-stage__gates {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* 顺序依赖的组才画连接轨：一条竖线把卡片串起来，说明「上一个没过，下一个就无从判断」。 */
+.qp-stage--sequential .qp-gate:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  left: 26px;
+  bottom: -13px;
+  width: 2px;
+  height: 13px;
+  background: var(--hairline-strong);
+}
+
+/* ── 门禁卡 ───────────────────────────────────────────────────────────── */
+
+.qp-gate {
+  position: relative;
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--hairline);
+  background: var(--surface-1);
+}
+
+.qp-gate--blocked {
+  border-color: var(--state-error-line);
+  background: var(--surface-1);
+}
+
+.qp-gate--waiting {
+  background: var(--surface-2);
+  border-style: dashed;
+}
+
+.qp-gate--passed {
+  background: var(--surface-2);
+}
+
+.qp-gate__marker {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 0.75rem;
+  font-weight: 700;
+  margin-top: 1px;
+  border: 1px solid currentColor;
+}
+
+.qp-gate--blocked .qp-gate__marker {
+  color: var(--state-error);
+  background: var(--state-error-bg);
+}
+
+.qp-gate--waiting .qp-gate__marker {
+  color: var(--state-idle);
+  background: var(--state-idle-bg);
+}
+
+.qp-gate--passed .qp-gate__marker {
+  color: var(--state-ok);
+  background: var(--state-ok-bg);
+}
+
+.qp-gate__body {
+  min-width: 0;
+  flex: 1;
+}
+
+.qp-gate__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.qp-gate__label {
+  font-size: 0.9375rem;
+  font-weight: 620;
+  color: var(--ink-900);
+}
+
+.qp-gate__text {
+  margin-top: 6px;
+  font-size: 0.875rem;
+  line-height: 1.65;
+  color: var(--ink-700);
+  max-width: 74ch;
+}
+
+.qp-gate__text b {
+  font-weight: 640;
+  color: var(--ink-900);
+}
+
+/* 动作区：主按钮、要改什么、可复制指令、复检按钮。 */
+.qp-gate__action {
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px dashed var(--hairline-strong);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.qp-gate__hint {
+  font-size: 0.75rem;
+  line-height: 1.6;
+  color: var(--ink-500);
+  max-width: 74ch;
+}
+
+.qp-gate__buttons {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+/* 需运维类：明确写出「不做修复按钮」，并把它做成一个可见的说明而不是脚注。 */
+.qp-gate__nofix {
+  font-size: 0.75rem;
+  color: var(--state-warn);
+  background: var(--state-warn-bg);
+  border: 1px solid var(--state-warn-line);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+  line-height: 1.6;
+}
+
+/* 等待上游：说清在等谁，而不是只说「等待」。 */
+.qp-gate__waiting {
+  margin-top: 6px;
+  font-size: 0.8125rem;
+  color: var(--ink-500);
+  line-height: 1.6;
+}
+
+.qp-gate__waiting b {
+  color: var(--ink-700);
+  font-weight: 600;
+}
+
+/* ── 证据抽屉 ─────────────────────────────────────────────────────────── */
+
+.qp-evidence {
+  margin-top: var(--space-3);
+}
+
+.qp-evidence > summary {
+  cursor: pointer;
+  font-size: 0.8125rem;
+  font-weight: 560;
+  color: var(--brand-600);
+  padding: var(--space-2) 0;
+  /* `display: block` 而不是 `list-style: none`：`summary` 默认是 `list-item`，在 Chrome 上
+     `list-style: none` 仍会留下标记盒，于是原生小三角和我自己的 `▸` 会同时出现。 */
+  display: block;
+}
+
+.qp-evidence > summary::-webkit-details-marker {
+  display: none;
+}
+
+/* 用 CSS 画三角形而不是用 ▸ 字符：字符在不同 DPI 与字体回退下大小不一，2x 屏上会糊成一个小点。 */
+.qp-evidence > summary::before {
+  content: '';
+  display: inline-block;
+  width: 0;
+  height: 0;
+  margin-right: 7px;
+  vertical-align: middle;
+  border-left: 5px solid var(--ink-500);
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+
+.qp-evidence[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.qp-evidence__body {
+  margin-top: var(--space-2);
+}
+
+/* ── 指标磁贴 ─────────────────────────────────────────────────────────── */
+
+.qp-tiles {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+.qp-tile {
+  background: var(--surface-1);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+}
+
+.qp-tile__label {
+  font-size: 0.75rem;
+  color: var(--ink-500);
+}
+
+.qp-tile__value {
+  font-size: 1.25rem;
+  font-weight: 660;
+  line-height: 1.3;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+  overflow-wrap: anywhere;
+}
+
+/* ── 窄屏 ─────────────────────────────────────────────────────────────── */
+
+@media (max-width: 639px) {
+  .qp-verdict {
+    padding: var(--space-4);
+  }
+
+  .qp-verdict__sentence {
+    font-size: 1.125rem;
+  }
+
+  .qp-verdict__top {
+    gap: var(--space-3);
+  }
+
+  .qp-verdict__icon {
+    width: 32px;
+    height: 32px;
+    font-size: 17px;
+  }
+
+  .qp-gate {
+    padding: var(--space-3);
+  }
+
+  .qp-stage--sequential .qp-gate:not(:last-child)::after {
+    left: 20px;
+  }
+}

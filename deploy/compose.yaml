@@ -173,6 +173,38 @@ services:
       interval: 15s
       timeout: 8s
       retries: 3
+  # React 工作台（按操作员决策组织的新界面）。与 Streamlit 版并存，端口分开，便于逐屏对照后再
+  # 决定何时下线旧界面。
+  #
+  # 它**不**走 `x-app`：那套锚点绑的是 Python 原生镜像与只读根文件系统下的一套挂载约定。
+  # 这里需要的是 nginx + 静态产物，而且它刻意不持有任何密钥——令牌由操作员在浏览器里输入，
+  # 存在 sessionStorage，不进容器。
+  web:
+    image: ${QUANT_WEB_IMAGE:-quant-platform-web:local}
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+      target: web
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs: [/tmp, /var/cache/nginx, /var/run]
+    security_opt: [no-new-privileges:true]
+    # 与本文件其它服务一样显式封顶。nginx 只托管静态产物与反代，256m 已经很宽裕；不给上限的话，
+    # 一个跑飞的请求日志就能把整机内存吃掉，而这不是它该有的权力。
+    cpus: 1
+    mem_limit: 256m
+    depends_on:
+      api: {condition: service_healthy}
+    ports: ["127.0.0.1:8502:8080"]
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, "http://127.0.0.1:8080/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: local
+      options: {max-size: 10m, max-file: "5"}
   qlib-data:
     <<: *engine
     command: [worker, --role, qlib-data]

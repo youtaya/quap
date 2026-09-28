@@ -1,0 +1,348 @@
+/* ============================================================================
+ * 应用外壳：侧边栏、顶栏、登录页。
+ *
+ * 两条来自附录 B 的硬约束在这里落地：
+ *   1. 顶栏徽标**不表达判决**。只放与判决无关的事实（连通性），用中性色。
+ *      反例：判决条写着「今天出不了建议」（红），顶栏挂着绿色「系统正常」——操作员立刻会问
+ *      「系统正常为什么出不了建议」。
+ *   2. 侧边栏的判决块**不放进导航项**。导航项的选中底是 --brand-500，红/绿在其上连 3:1 都
+ *      达不到，标记颜色会随选中态失效。判决是全局状态，不是导航项的属性。
+ * ========================================================================= */
+
+/* ── 侧边栏 ───────────────────────────────────────────────────────────── */
+
+.qp-sidebar {
+  background: var(--navy-900);
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-5) var(--space-3) var(--space-4);
+  overflow-y: auto;
+  /* 桌面：跟随页面滚动而不参与滚动（内容区自己滚）。 */
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  height: 100dvh;
+}
+
+.qp-brand {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 0 var(--space-2) var(--space-5);
+}
+
+.qp-brand__logo {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-md);
+  background: var(--brand-500);
+  color: var(--on-brand);
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  font-size: 20px;
+  flex: 0 0 36px;
+}
+
+.qp-brand__name {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--nav-200);
+  line-height: 1.25;
+}
+
+.qp-brand__sub {
+  font-size: 10px;
+  letter-spacing: 1.6px;
+  color: var(--nav-300);
+  font-weight: 500;
+}
+
+/* 常驻判决块 —— 操作员在任何空间都能看到今天能不能出建议。 */
+.qp-verdict-mini {
+  margin: 2px 0 var(--space-2);
+  padding: 10px var(--space-3);
+  border-radius: var(--radius-md);
+  border-left: 3px solid transparent;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.qp-verdict-mini--err {
+  border-left-color: var(--nav-err);
+}
+
+.qp-verdict-mini--ok {
+  border-left-color: var(--nav-ok);
+}
+
+.qp-verdict-mini--idle {
+  border-left-color: var(--nav-300);
+}
+
+.qp-verdict-mini__key {
+  font-size: 10px;
+  letter-spacing: 0.4px;
+  color: var(--nav-100);
+  margin-bottom: 3px;
+}
+
+.qp-verdict-mini__value {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--nav-200);
+}
+
+.qp-verdict-mini--err .qp-verdict-mini__value {
+  color: var(--nav-err);
+}
+
+.qp-verdict-mini--ok .qp-verdict-mini__value {
+  color: var(--nav-ok);
+}
+
+.qp-nav-group {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.3px;
+  color: var(--nav-300);
+  padding: 14px var(--space-3) 6px;
+}
+
+.qp-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-sm);
+  color: var(--nav-100);
+  font-size: 14px;
+  cursor: pointer;
+  border: 0;
+  background: transparent;
+  width: 100%;
+  text-align: left;
+  text-decoration: none;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.qp-nav-item:hover {
+  background: var(--navy-800);
+  color: var(--nav-200);
+  text-decoration: none;
+}
+
+.qp-nav-item.is-active {
+  background: var(--brand-500);
+  color: var(--on-brand);
+  font-weight: 500;
+}
+
+.qp-nav-item svg {
+  flex: 0 0 16px;
+  opacity: 0.9;
+}
+
+.qp-sidebar__foot {
+  margin-top: auto;
+  padding: var(--space-5) var(--space-3) 0;
+  border-top: 1px solid var(--navy-700);
+  font-size: 11px;
+  line-height: 1.9;
+  color: var(--nav-300);
+}
+
+.qp-sidebar__foot b {
+  color: var(--nav-100);
+  font-weight: 500;
+}
+
+/* ── 顶栏 ─────────────────────────────────────────────────────────────── */
+
+.qp-topbar {
+  min-height: var(--topbar-height);
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--hairline);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-6);
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  /* 顶栏是整页最容易溢出的一条：标题长度随工作空间变化（「今日」vs「运行记录与配置」），
+     而右侧徽标是固定宽度。没有 min-width:0，标题一长就把徽标顶出视口，页面就横滚了。 */
+  min-width: 0;
+}
+
+.qp-topbar__title {
+  font-size: 16px;
+  font-weight: 620;
+  color: var(--ink-900);
+  white-space: nowrap;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.qp-topbar__desc {
+  font-size: 12px;
+  color: var(--ink-500);
+  padding-left: var(--space-3);
+  border-left: 1px solid var(--hairline);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.qp-topbar__right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  /* 允许被压缩，否则它会以自身固有宽度撑破顶栏。 */
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+/* 徽标本身不参与压缩：被压扁的徽标比被隐藏的徽标更难读。窄屏靠媒体查询整条隐藏。 */
+.qp-topbar__right > * {
+  flex: none;
+}
+
+/* 顶栏的「接口已连接」徽标。刻意用中性色：它说的是连通性，不是判决。 */
+.qp-topbar .qp-badge {
+  font-size: 0.6875rem;
+}
+
+/* ── 窄屏：侧边栏收成抽屉 ─────────────────────────────────────────────── */
+
+.qp-navtoggle {
+  display: none;
+}
+
+.qp-scrim {
+  display: none;
+}
+
+@media (max-width: 1023px) {
+  .qp-sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    width: min(84vw, var(--sidebar-width));
+    z-index: 50;
+    transform: translateX(-100%);
+    transition: transform var(--dur-slow) var(--ease-out);
+    box-shadow: var(--shadow-xl);
+    height: 100dvh;
+  }
+
+  .qp-sidebar.is-open {
+    transform: none;
+  }
+
+  .qp-navtoggle {
+    display: inline-flex;
+  }
+
+  .qp-scrim.is-open {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    background: rgba(12, 24, 46, 0.42);
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+  }
+
+  .qp-topbar {
+    padding: var(--space-2) var(--space-4);
+  }
+}
+
+@media (max-width: 639px) {
+  .qp-topbar__desc {
+    display: none;
+  }
+
+  .qp-topbar {
+    padding: var(--space-2) var(--space-3);
+    gap: var(--space-2);
+  }
+
+  /* 窄屏只留最必要的一项事实（连通性）。数据源、行情新鲜度、采集暂停都是「可以事后查」的，
+     留在这里会把顶栏撑破，而顶栏一旦横滚，整页都横滚。 */
+  .qp-topbar__right .qp-badge--secondary {
+    display: none;
+  }
+}
+
+/* 极窄屏（≤400px）：连覆盖率徽标也收起来，只留「接口已连接」。
+   事实本身没有丢——它们在「运行记录与配置」里完整可查。 */
+@media (max-width: 400px) {
+  .qp-topbar__right .qp-badge:not(:first-child) {
+    display: none;
+  }
+}
+
+/* ── 登录页 ───────────────────────────────────────────────────────────── */
+
+.qp-login {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: var(--space-5);
+  background:
+    radial-gradient(1200px 600px at 50% -10%, var(--brand-50), transparent),
+    var(--canvas);
+}
+
+.qp-login__card {
+  width: 100%;
+  max-width: 420px;
+  background: var(--surface-1);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: var(--space-6);
+}
+
+.qp-login__brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-5);
+}
+
+.qp-login__brand .qp-brand__logo {
+  background: var(--brand-600);
+}
+
+.qp-login__brand .qp-brand__name {
+  color: var(--ink-900);
+}
+
+.qp-login__brand .qp-brand__sub {
+  color: var(--ink-500);
+  letter-spacing: 0.8px;
+}
+
+.qp-login__foot {
+  margin-top: var(--space-5);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--hairline);
+  font-size: 0.75rem;
+  line-height: 1.8;
+  color: var(--ink-500);
+}
