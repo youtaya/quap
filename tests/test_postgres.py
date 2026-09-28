@@ -494,10 +494,67 @@ def test_readiness_clears_the_capability_blocker_once_every_capability_is_verifi
     blockers = readiness(db, settings)["frequencies"]["day"]["blockers"]
 
     assert not any(item.startswith("数据源未验证：") for item in blockers)
+    # 顺序跟着 `GATE_SPECS` 走，也就是附录 A.3 的依赖链：先「没有数据代次」，再「没有模型」。
+    # P0 时它是 append 出来的，两条正好反着读。
     assert blockers == ["采集范围为「index」；生产验收要求 QUANT_HISTORY_SCOPE=all，"
                         "且全市场日线覆盖率至少 95%",
-                        "必需的 Qlib 服务未就绪", "没有已发布、已合格且未过期的 Qlib 模型",
-                        "没有已验证的 Qlib 数据代次"]
+                        "必需的 Qlib 服务未就绪", "没有已验证的 Qlib 数据代次",
+                        "没有已发布、已合格且未过期的 Qlib 模型"]
+
+
+def test_readiness_exposes_the_gate_chain_with_upstream_waiting(db, settings):
+    """判决面消费的是 `gates`，不是 `blockers`。
+
+    关键断言是「等待上游」：阶段一都没过的时候，下游门禁不得显示自身失败状态——它此刻的真实状态
+    无从判断，报红就是在造一个操作员无法行动的假行动项（附录 A.3 规则 2）。
+    """
+    from quant_platform.pipeline import DAILY_CAPABILITIES, readiness
+
+    payload = readiness(db, settings)["frequencies"]["day"]
+    chain = {gate["key"]: gate for gate in payload["gates"]}
+    assert [gate["key"] for gate in payload["gates"]] == [
+        "capability", "scope", "engine", "generation", "model"
+    ]
+    assert chain["capability"]["stage"] == "foundation" and chain["capability"]["action"] == "auto"
+    assert chain["engine"]["action"] == "ops"
+    assert chain["generation"]["status"] == "waiting" and chain["model"]["status"] == "waiting"
+    assert chain["model"]["depends_on"] == ["generation"]
+    # ⑥ 产出状态不参与 `ready`：能不能跑与跑没跑出来是两个问题。
+    assert payload["output"]["published"] is False and payload["output"]["depends_on"] == ["model"]
+
+    # 阶段一三项互相独立，可以**同时**是卡点，而且都要展示（附录 A.3 规则 1）；此时阶段二只显示
+    # 「等待上游」，不显示自身失败状态（规则 2）。这两条一起，才是判决面真正的行为。
+    with db.transaction() as conn:
+        for capability in DAILY_CAPABILITIES:
+            db.capability(capability, "reachable", {"schema_verified": True, "source": "sina"})
+    chain = {gate["key"]: gate for gate in readiness(db, settings)["frequencies"]["day"]["gates"]}
+    assert [chain[key]["status"] for key in ("capability", "scope", "engine", "generation", "model")] == [
+        "passed", "blocked", "blocked", "waiting", "waiting"
+    ]
+
+    # 阶段一全部放行之后，第一个真正卡住的环节才成为 `blocked` —— 那才是操作员此刻该处理的。
+    db.heartbeat("qlib-daily-test", "qlib-daily", {"status": "running"})
+    db.heartbeat("qlib-data-test", "qlib-data", {"status": "running"})
+    chain = {
+        gate["key"]: gate
+        for gate in readiness(db, settings.model_copy(update={"history_scope": "all"}))["frequencies"]["day"]["gates"]
+    }
+    assert [chain[key]["status"] for key in ("capability", "scope", "engine", "generation", "model")] == [
+        "passed", "passed", "passed", "blocked", "waiting"
+    ]
+    assert chain["generation"]["evidence"]["frequency"] == "day"
+
+
+def test_readiness_separates_the_scope_gate_from_the_capability_gate(db, settings):
+    """范围是配置、能力是数据，两条门禁的 `evidence` 必须各自说清自己的事实。"""
+    from quant_platform.pipeline import readiness
+
+    chain = {gate["key"]: gate for gate in readiness(db, settings)["frequencies"]["day"]["gates"]}
+    assert chain["scope"]["evidence"] == {"scope": "index", "required_scope": "all", "minimum_coverage": 0.95}
+    assert chain["scope"]["action"] == "manual"
+    assert chain["capability"]["evidence"]["required_count"] == 7
+    assert chain["capability"]["evidence"]["missing_count"] == 7
+    assert chain["capability"]["evidence"]["missing"] == sorted(chain["capability"]["evidence"]["missing"])
 
 
 def test_readiness_states_the_collection_scope_instead_of_hiding_it_behind_coverage(db, settings):

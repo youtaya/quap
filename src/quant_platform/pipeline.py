@@ -8,6 +8,9 @@ from quant_platform.domain.workflow import (
     CAPABILITY_LABELS,
     DATA_CONTRACT,
     ENGINE_VERSION,
+    GATE_SPECS,
+    GATE_STAGES,
+    OUTPUT_GATE,
     PipelineBlocked,
     RunInput,
     ScanPolicy,
@@ -75,6 +78,68 @@ def active_model(conn, frequency):
     ).fetchone()
 
 
+def gate_specs(frequency):
+    """门禁规格里属于该频率的那些，顺序即呈现顺序。"""
+    return [spec for spec in GATE_SPECS if frequency in spec.get("frequencies", ("day", "5min"))]
+
+
+def gate_chain(frequency, failures, evidence):
+    """把门禁规格与本次判定结果拼成判决面消费的结构。
+
+    `status` 三值，含义互不重叠：
+      `passed`  自身条件成立；
+      `blocked` 自身条件不成立，**且**上游都已通过 —— 这才是操作员此刻该处理的那一个；
+      `waiting` 自身条件不成立，但上游也没过 —— 按附录 A.3 规则 2，下游**不得**显示自身失败状态。
+                它的真实状态此刻无从判断，显示了就是在凭空造一个假的行动项。
+    """
+    resolved, chain = {}, []
+    for spec in gate_specs(frequency):
+        failed = spec["key"] in failures
+        upstream = [resolved[key] for key in spec["depends_on"]]
+        if not failed:
+            status = "passed"
+        else:
+            status = "blocked" if all(item == "passed" for item in upstream) else "waiting"
+        resolved[spec["key"]] = status
+        chain.append(
+            {
+                "key": spec["key"],
+                "stage": spec["stage"],
+                "stage_label": GATE_STAGES[spec["stage"]],
+                "action": spec["action"],
+                "depends_on": list(spec["depends_on"]),
+                "status": status,
+                # 判决句由前端按 `key` 组稿，数字全部来自这里 —— 文案在展示层，事实在服务端，
+                # 两边都不必去猜对方。
+                "evidence": evidence.get(spec["key"], {}),
+            }
+        )
+    return chain
+
+
+def published_output(db, frequency):
+    """⑥ 产出状态：今天是否已存在一份**有效**建议（`VALID_REPORT` 的全部条件都成立）。
+
+    它不参与 `ready`：`ready` 问「能不能跑」，这里问「跑出来的东西在不在」。混为一谈会让
+    「流水线可运行、但今天还没推理」看起来像故障。
+    """
+    rows = db.rows(
+        "SELECT r.id,r.as_of,r.available_at,r.valid_until FROM recommendations r "
+        "JOIN prediction_runs p ON p.id=r.prediction_id JOIN model_versions m ON m.id=p.model_id "
+        "JOIN model_evaluations e ON e.model_id=m.id JOIN pipeline_runs a ON a.id=p.run_id "
+        f"WHERE r.frequency=%s AND ({VALID_REPORT}) ORDER BY r.as_of DESC LIMIT 1",
+        (frequency,),
+    )
+    row = rows[0] if rows else None
+    return {
+        "published": row is not None,
+        "depends_on": list(OUTPUT_GATE["depends_on"]),
+        "recommendation_id": str(row["id"]) if row else None,
+        "as_of": row["as_of"].isoformat() if row else None,
+        "valid_until": row["valid_until"].isoformat() if row else None,
+    }
+
+
 def readiness(db, settings):
     capabilities = db.rows("SELECT * FROM capabilities")
     available = {r["endpoint"] for r in capabilities if r["status"] == "reachable" and r["data"].get("schema_verified")}
@@ -94,27 +159,57 @@ def readiness(db, settings):
         missing = sorted(required - available)
         # 「permissions」是旧令牌供应商的措辞；免令牌公开源没有权限可授，缺的是一次成功的真实
         # 采集（`Market._qualify` 据此置位 `schema_verified`）。
-        # 这几条直接渲染在「今日」页，所以文案就是面向操作员的中文原文——不要在仪表盘里再做一层
-        # 英文到中文的字符串匹配翻译。
-        blockers = [
-            "数据源未验证：" + "、".join(CAPABILITY_LABELS.get(name, name) for name in missing)
-        ] if missing else []
+        #
+        # 判定与文案在同一个 `if` 里成对写下：`failures` 是门禁链的输入，`evidence` 是判决句的
+        # 数字来源，`blockers` 是旧接口沿用的字符串。三者出自同一处，所以不可能互相漂移。
+        failures, evidence = {}, {}
+        if missing:
+            failures["capability"] = "数据源未验证：" + "、".join(
+                CAPABILITY_LABELS.get(name, name) for name in missing
+            )
+            evidence["capability"] = {
+                "missing": missing,
+                "missing_labels": [CAPABILITY_LABELS.get(name, name) for name in missing],
+                "required": sorted(required),
+                "verified": sorted(required & available),
+                "required_count": len(required),
+                "missing_count": len(missing),
+            }
         # 采集范围是**配置**，不是数据缺陷，所以它单列一条，而不是躲在覆盖门禁后面。生产验收要求
         # 全市场 ≥95% 覆盖；`index` 范围只采成分股与观察篮子，本就不满足这一条，必须说出来。
         if settings.history_scope != "all":
-            blockers.append(
+            failures["scope"] = (
                 f"采集范围为「{settings.history_scope}」；生产验收要求 QUANT_HISTORY_SCOPE=all，"
                 "且全市场日线覆盖率至少 95%"
             )
+            evidence["scope"] = {"scope": settings.history_scope, "required_scope": "all", "minimum_coverage": 0.95}
         if role not in roles or "qlib-data" not in roles:
-            blockers.append("必需的 Qlib 服务未就绪")
-        if models[freq] is None:
-            blockers.append("没有已发布、已合格且未过期的 Qlib 模型")
+            failures["engine"] = "必需的 Qlib 服务未就绪"
+            evidence["engine"] = {
+                "required_roles": sorted({role, "qlib-data"}),
+                "healthy_roles": sorted(roles),
+                "healthy": False,
+            }
         if not any(g["frequency"] == freq for g in generations):
-            blockers.append("没有已验证的 Qlib 数据代次")
+            failures["generation"] = "没有已验证的 Qlib 数据代次"
+            evidence["generation"] = {"frequency": freq, "generation_count": 0}
+        if models[freq] is None:
+            failures["model"] = "没有已发布、已合格且未过期的 Qlib 模型"
+            evidence["model"] = {"frequency": freq}
         if freq == "5min" and models["day"] is None:
-            blockers.append("缺少日线模型基线")
-        result[freq] = {"ready": not blockers, "blockers": blockers, "model": models[freq]}
+            failures["day_baseline"] = "缺少日线模型基线"
+            evidence["day_baseline"] = {"missing_frequency": "day"}
+        chain = gate_chain(freq, failures, evidence)
+        # `blockers` 的顺序由 `GATE_SPECS` 决定，而不是 append 顺序。P0 时它是 append 出来的，
+        # 于是「没有模型」排在「没有数据代次」前面——和附录 A.3 的依赖链正好反着读。
+        blockers = [failures[spec["key"]] for spec in gate_specs(freq) if spec["key"] in failures]
+        result[freq] = {
+            "ready": not blockers,
+            "blockers": blockers,
+            "model": models[freq],
+            "gates": chain,
+            "output": published_output(db, freq),
+        }
     return {
         "engine": ENGINE_VERSION,
         "required": True,

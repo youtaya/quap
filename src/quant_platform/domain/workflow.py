@@ -28,6 +28,36 @@ CAPABILITY_LABELS = {
     "minutes": "分钟线",
 }
 
+# 「今日」判决面的门禁链。`docs/DESIGN.md` 附录 A.3 是这张表的权威定义，代码只是它的副本：
+# **阶段一三项互相独立**（都直接对原始状态判定，不存在谁依赖谁），**阶段二起顺序依赖**。
+#
+# `depends_on` 不只是文档，它是呈现规则的输入。依赖未通过时，下游门禁**不得**显示自身失败状态，
+# 只能显示「等待上游」——否则操作员会看到一个自己无法行动的红点，误以为要先处理它，于是又开始了
+# 那趟「Overview → 数据 → 模型 → 回 Overview」的往返。这正是这次重构要消灭的东西。
+GATE_STAGES = {"foundation": "基础就绪", "data-model": "数据与模型", "output": "产出"}
+
+# 动作类型三分（附录 A.4），决定卡点下方出现什么：
+#   auto   可自解 —— 平台内有对应操作，给主按钮 + 预计耗时；
+#   manual 半自解 —— 需改配置 / 重启平台进程，给「改什么」+「我已处理，重新检测」；
+#   ops    需运维 —— 卡点在平台进程之外，给可复制指令 + 复检，**禁止**配一个点了不起作用的按钮。
+GATE_ACTIONS = ("auto", "manual", "ops")
+
+# 顺序即呈现顺序。`day_baseline` 判的是**日线**模型，所以它虽然只在五分钟频率下出现，却不挂在
+# 五分钟自己的链上（`depends_on` 为空）——它是独立卡点，不该被上游挡住。
+GATE_SPECS = (
+    {"key": "capability", "stage": "foundation", "depends_on": (), "action": "auto"},
+    {"key": "scope", "stage": "foundation", "depends_on": (), "action": "manual"},
+    {"key": "engine", "stage": "foundation", "depends_on": (), "action": "ops"},
+    {"key": "generation", "stage": "data-model", "depends_on": ("capability", "scope", "engine"), "action": "auto"},
+    {"key": "model", "stage": "data-model", "depends_on": ("generation",), "action": "manual"},
+    {"key": "day_baseline", "stage": "data-model", "depends_on": (), "action": "ops", "frequencies": ("5min",)},
+)
+
+# ⑥「今日建议」不是就绪条件，而是**产出状态**：它问的不是「能不能跑」，是「跑出来的东西在不在」。
+# 所以它不进 `GATE_SPECS`（不参与 `ready` 判定），由 `readiness` 的 `output` 字段单独承载，
+# 依赖关系固定为 `model`。
+OUTPUT_GATE = {"key": "recommendation", "stage": "output", "depends_on": ("model",), "action": "auto"}
+
 
 class PipelineBlocked(RuntimeError):
     """A missing prerequisite, never permission to use a substitute model."""
